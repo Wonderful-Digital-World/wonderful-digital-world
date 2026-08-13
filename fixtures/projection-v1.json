@@ -1,0 +1,18 @@
+{
+  "contract_version": "1.0",
+  "projection_id": "synthetic-projection-1",
+  "generated_at": "2026-08-13T10:00:00Z",
+  "source_revision": "synthetic-revision-7",
+  "freshness_seconds": 60,
+  "place": "attention-room",
+  "payload": {
+    "attention": [
+      {
+        "work_id": "synthetic-work-1",
+        "summary": "A reversible choice needs human judgment",
+        "status": "pending"
+      }
+    ]
+  },
+  "authorized_for": ["human"]
+}
