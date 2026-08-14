@@ -9,5 +9,5 @@ An interface should show freshness, uncertainty, pending decisions, blocked work
 and action outcomes. It must not create a second hidden state model merely to
 make the presentation convenient.
 
-This boundary enables multiple experiences—including World View / Tiny Places—
+This boundary enables multiple experiences—including [World View / Tiny Places](https://github.com/Wonderful-Digital-World/world-view)—
 without coupling durable state to a renderer.

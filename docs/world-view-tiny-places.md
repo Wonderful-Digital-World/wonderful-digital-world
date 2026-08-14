@@ -1,6 +1,6 @@
 # World View / Tiny Places
 
-**Wonderful Digital World is the persistent computational environment. World View / Tiny Places is a human-facing projection and observability surface over that environment.**
+**Wonderful Digital World is the persistent computational environment. [World View / Tiny Places](https://github.com/Wonderful-Digital-World/world-view) is a human-facing projection and observability surface over that environment.**
 
 1. **Identity:** an independent visual product, not WDW's canonical interface.
 2. **Purpose:** make selected places, residents, work, freshness, and outcomes legible.
@@ -12,7 +12,7 @@
 8. **Failure:** unsupported versions, stale data, and denied viewers fail visibly.
 9. **Status:** fixture adapter is experimental; live WDW integration is planned.
 10. **License:** Tiny Places is treated as a GPL-3.0-or-later derivative of
-    `tinyhumansai/tiny.place`; it remains in a separate repository and distribution unit.
+    [`tinyhumansai/tiny.place`](https://github.com/tinyhumansai/tiny.place); it remains in a separate repository and distribution unit.
 
 This MIT repository contains no copied Tiny Places code or assets. Before
 linking, embedding, or copying between the projects, perform a license review.

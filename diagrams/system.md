@@ -14,6 +14,7 @@ flowchart LR
     World --> Projection["Versioned authorized projection"]
     Projection --> Interfaces["Replaceable interfaces / World View"]
     Interfaces -->|"bounded intent"| Policy
+    click Interfaces "https://github.com/Wonderful-Digital-World/world-view" "World View repository"
 ```
 
 The diagram shows responsibility and data boundaries, not mandatory deployment

@@ -180,12 +180,12 @@ is the shortest executable tour.
 
 These projects are independently implemented and are not WDW packages:
 
-- **The Human Model** explores longitudinal representation of a changing person:
+- **[The Human Model](https://github.com/haleyparks329/the-human-model)** explores longitudinal representation of a changing person:
   evidence, uncertainty, interventions, outcomes, and canonical human-domain
   state.
-- **Bridget** explores persistent continuity and reconciliation through a bounded
+- **[Bridget](https://github.com/haleyparks329/bridget-architecture)** explores persistent continuity and reconciliation through a bounded
   resident rather than a universal assistant or gateway.
-- **QA Agents** contributed patterns for durable shared state, stable issue
+- **[QA Agents](https://github.com/haleyparks329/qa-agents)** contributed patterns for durable shared state, stable issue
   fingerprints, advisory routing, and explicit outcomes without becoming part of
   WDW.
 - **[World View / Tiny Places](https://github.com/Wonderful-Digital-World/world-view)**

@@ -19,8 +19,8 @@ Every material claim uses one of these labels:
 | Deterministic loop composition | implemented | `wdw_harness`, runnable example |
 | Durable database adapter | planned | no adapter in this repository |
 | Production connectors and tools | planned | only protocols/boundaries are public |
-| Human Model and Bridget integration | experimental | independent projects; not runtime dependencies |
-| World View live adapter | planned | projection contract documented; GPL project remains separate |
+| [Human Model](https://github.com/haleyparks329/the-human-model) and [Bridget](https://github.com/haleyparks329/bridget-architecture) integration | experimental | independent projects; not runtime dependencies |
+| [World View](https://github.com/Wonderful-Digital-World/world-view) live adapter | planned | projection contract documented; GPL project remains separate |
 | One mandatory interpreter for all evidence | intentionally rejected | domains may have zero or many interpretations |
 | Central dashboard as world authority | intentionally rejected | interfaces are replaceable projections |
 | Fully autonomous general resident | aspirational | authority remains bounded and explicit |

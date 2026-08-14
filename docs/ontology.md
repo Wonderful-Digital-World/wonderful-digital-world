@@ -12,6 +12,6 @@ The public ontology is intentionally small.
 | Projection | Versioned, scoped rendering of world state | Disposable view, not source of truth |
 | Authority | Explicit capabilities held by a subject | Yes for the attempted effect |
 
-A domain owner—not a shared resident—owns canonical domain state. Human Model,
-Bridget, and other residents may contribute interpretations under their own
+A domain owner—not a shared resident—owns canonical domain state. [Human Model](https://github.com/haleyparks329/the-human-model),
+[Bridget](https://github.com/haleyparks329/bridget-architecture), and other residents may contribute interpretations under their own
 contracts; none is mandatory for every artifact.

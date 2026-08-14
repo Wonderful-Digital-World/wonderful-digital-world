@@ -10,7 +10,7 @@ owner. It declares:
 - its uncertainty and abstention behavior; and
 - the canonical domain owner to which accepted changes are reconciled.
 
-Residents do not share a single compulsory consciousness. Human Model, Bridget,
+Residents do not share a single compulsory consciousness. [Human Model](https://github.com/haleyparks329/the-human-model), [Bridget](https://github.com/haleyparks329/bridget-architecture),
 Coach, Banjo, and future residents can remain independent implementations. A
 world may route an artifact to zero, one, or several residents, and conflicting
 interpretations remain attributed rather than silently merged.
