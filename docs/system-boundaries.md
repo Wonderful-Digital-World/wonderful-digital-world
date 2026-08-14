@@ -8,7 +8,7 @@ Outside the core are:
 - source systems reached through connectors;
 - effect systems reached through capability-bearing tools;
 - replaceable interfaces and visualizations;
-- independent resident implementations such as Human Model or Bridget; and
+- independent resident implementations such as [Human Model](https://github.com/haleyparks329/the-human-model) or [Bridget](https://github.com/haleyparks329/bridget-architecture); and
 - a person's private lived data and credentials.
 
 Connectors translate transport data and preserve provenance; they do not decide
