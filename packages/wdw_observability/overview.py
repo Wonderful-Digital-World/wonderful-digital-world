@@ -10,8 +10,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 from wsgiref.simple_server import make_server
 
-from .adapters import workspace_records
 from .projections import PUBLIC_DELAY, models_experience, private_overview, public_systems_projection
+from .refresh import ProjectionRefresher
 from .store import OperatorStore
 
 FRESH = timedelta(hours=24)
@@ -21,26 +21,21 @@ RESIDENT_REPOSITORIES = {
     "bridget": "bridget",
     "coach": "coach",
     "banjo": "banjo",
-    "human-model": "human-model",
 }
 OVERVIEW_RECORD_KINDS = (
     "ResidentSnapshot",
     "MeaningfulActivity",
     "Ingestion",
     "EvaluationRun",
+    "AttentionItem",
 )
 
 
 def _overview_records(store: OperatorStore) -> list[dict[str, Any]]:
-    """Read WP1 records without losing the activity payload's domain kind."""
+    """Read the real overview projection from the durable store."""
     records: list[dict[str, Any]] = []
     for record_kind in OVERVIEW_RECORD_KINDS:
-        for source in store.records(kind=record_kind, limit=1_000, mode="real"):
-            row = dict(source)
-            if record_kind == "MeaningfulActivity":
-                row["activity_kind"] = row.get("kind")
-            row["kind"] = record_kind
-            records.append(row)
+        records.extend(store.records(kind=record_kind, limit=1_000, mode="real"))
     return sorted(records, key=lambda row: str(row.get("occurred_at", "")), reverse=True)
 
 
@@ -80,12 +75,14 @@ def _safe_link(value: Any) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
     candidate = value.strip()
-    parsed = urlparse(candidate)
-    if parsed.scheme in {"http", "https", "file"}:
-        return candidate
     path = Path(candidate)
     if path.is_absolute() and path.exists():
         return path.resolve().as_uri()
+    if candidate.startswith("/") and not candidate.startswith("//"):
+        return candidate
+    parsed = urlparse(candidate)
+    if parsed.scheme in {"http", "https", "file"}:
+        return candidate
     return None
 
 
@@ -129,7 +126,15 @@ def build_private_view(
         row["deepLink"] = _resident_link(workspace, row.get("resident_id"))
         residents.append(row)
     result["residents"] = residents
-    result["needsHaley"] = [row for row in residents if row.get("state") == "needs-attention"]
+    attention: list[dict[str, Any]] = []
+    for source in result["needsHaley"]:
+        row = dict(source)
+        row["freshness"] = _freshness(row.get("updated_at") or row.get("occurred_at"), now)
+        row["deepLink"] = _safe_link(row.get("deep_link")) or _resident_link(
+            workspace, row.get("resident_id")
+        )
+        attention.append(row)
+    result["needsHaley"] = attention
 
     activities: list[dict[str, Any]] = []
     for source in result["recentActivity"]:
@@ -410,10 +415,12 @@ def _private_content(view: Mapping[str, Any], scan_error: str | None) -> str:
         if scan_error else ""
     )
     needs_html = "".join(
-        f'<article><div>{_badge(row.get("state"))}<strong>{_text(row.get("display_name"), "Unnamed resident")}</strong></div>'
-        f'<p>{_text(row.get("status_summary"), "No status summary")}</p>{_link(row.get("deepLink"), "Open repository")}</article>'
+        f'<article><div>{_badge(row.get("status"))}<strong>{_text(row.get("summary"), "Attention requested")}</strong></div>'
+        f'<p>{_text(row.get("reason"), "No reason supplied")}</p>'
+        f'<small>{_text(row.get("resident_id"))} · owner {_text(row.get("owner"))} · {_text(row.get("freshness", {}).get("label"))}</small> '
+        f'{_link(row.get("deepLink"), "Inspect")}</article>'
         for row in needs
-    ) or _empty("No resident has reported a request for Haley.")
+    ) or _empty("No open attention items require Haley.")
     residents_html = "".join(
         f'<tr><td><strong>{_text(row.get("display_name"), "Unnamed resident")}</strong><small>{_text(row.get("resident_id"))}</small></td>'
         f'<td>{_badge(row.get("state"))}</td><td>{_text(row.get("status_summary"), "No status summary")}</td>'
@@ -513,6 +520,7 @@ def create_app(
     workspace: Path,
     now_provider: Callable[[], datetime] = lambda: datetime.now(UTC),
     scan_error: str | None = None,
+    refresher: ProjectionRefresher | None = None,
 ) -> Callable[..., list[bytes]]:
     def application(environ: Mapping[str, Any], start_response: Callable[..., Any]) -> list[bytes]:
         path = environ.get("PATH_INFO", "/")
@@ -525,6 +533,8 @@ def create_app(
             return [body]
         requested = parse_qs(str(environ.get("QUERY_STRING", ""))).get("view", ["private"])[0]
         mode = requested if requested in {"private", "public"} else "private"
+        if refresher is not None:
+            refresher.refresh()
         now = now_provider()
         records = _overview_records(store)
         view = (
@@ -532,11 +542,16 @@ def create_app(
             if mode == "private"
             else build_public_view(records, now=now)
         )
+        if mode == "private":
+            view["projection"] = refresher.status() if refresher else {
+                "state": "static", "lastAttemptAt": None, "lastSuccessAt": None, "error": scan_error
+            }
         if path == "/api/overview":
             body = json.dumps(view, separators=(",", ":"), sort_keys=True).encode("utf-8")
             content_type = "application/json; charset=utf-8"
         else:
-            body = render_page(view, mode=mode, scan_error=scan_error)
+            refresh_error = _mapping(view.get("projection")).get("error") if mode == "private" else None
+            body = render_page(view, mode=mode, scan_error=str(refresh_error) if refresh_error else scan_error)
             content_type = "text/html; charset=utf-8"
         headers = [
             ("Content-Type", content_type),
@@ -558,17 +573,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--database", type=Path, default=Path("wdw-command-center.sqlite3"))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--refresh-seconds", type=float, default=30.0)
     args = parser.parse_args(argv)
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         parser.error("Command Center only binds to a loopback host")
+    if args.refresh_seconds <= 0:
+        parser.error("--refresh-seconds must be positive")
 
     store = OperatorStore(args.database)
-    scan_error = None
-    try:
-        store.append_many(workspace_records(args.workspace), mode="real")
-    except Exception as exc:  # noqa: BLE001 - preserve the last durable projection.
-        scan_error = f"{type(exc).__name__}: {exc}"
-    application = create_app(store, workspace=args.workspace, scan_error=scan_error)
+    store.purge_fixtures()
+    refresher = ProjectionRefresher(
+        store, args.workspace, interval_seconds=args.refresh_seconds
+    )
+    refresher.refresh(force=True)
+    application = create_app(store, workspace=args.workspace, refresher=refresher)
     with make_server(args.host, args.port, application) as server:
         print(f"Command Center: http://{args.host}:{args.port}/overview?view=private")
         server.serve_forever()

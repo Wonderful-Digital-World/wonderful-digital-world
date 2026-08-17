@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://haleyparks.com/schemas/public-memory-v1.schema.json",
+  "title": "Public Memory Projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "memories"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "memories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "memoryId", "slug", "occurredAt", "publishedAt", "kind", "title", "summary", "sourceLabel", "sourceType", "theme", "editorialWeight", "clusterId", "relatedProjects", "relatedWriting", "publicEvidence", "tags", "publicationMode"],
+        "properties": {
+          "schemaVersion": { "const": "1.0" },
+          "memoryId": { "type": "string", "pattern": "^mem_[a-f0-9]{12,}$" },
+          "slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+          "occurredAt": { "type": "string", "format": "date-time" },
+          "publishedAt": { "type": "string", "format": "date-time" },
+          "kind": { "enum": ["milestone", "connection", "practice", "release", "reflection"] },
+          "title": { "type": "string", "minLength": 1 },
+          "summary": { "type": "string", "minLength": 1 },
+          "sourceLabel": { "type": "string", "minLength": 1 },
+          "sourceType": { "enum": ["editorial", "project", "resident", "system"] },
+          "theme": { "type": "string", "minLength": 1 },
+          "editorialWeight": { "enum": ["feature", "standard", "note"] },
+          "clusterId": { "type": ["string", "null"] },
+          "relatedProjects": { "type": "array", "items": { "type": "string", "pattern": "^/projects/" }, "uniqueItems": true },
+          "relatedWriting": { "type": "array", "items": { "type": "string", "pattern": "^/(writing|field-log)/" }, "uniqueItems": true },
+          "publicEvidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["label", "href"],
+              "properties": { "label": { "type": "string", "minLength": 1 }, "href": { "type": "string", "pattern": "^(https://|/)" } }
+            }
+          },
+          "tags": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+          "publicationMode": { "const": "manual" }
+        }
+      }
+    }
+  }
+}

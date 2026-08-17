@@ -31,6 +31,11 @@ class ResidentState(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class AttentionState(StrEnum):
+    OPEN = "open"
+    RESOLVED = "resolved"
+
+
 class ReviewOutcome(StrEnum):
     RELEVANT = "relevant"
     NOT_RELEVANT = "not-relevant"
@@ -93,6 +98,44 @@ class MeaningfulActivity(ObservabilityRecord):
     links: Mapping[str, Any] = field(default_factory=dict)
     evidence_links: tuple[str, ...] = ()
     compute_provenance: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        result = ObservabilityRecord.to_dict(self)
+        result["activity_kind"] = result.pop("kind")
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class AttentionItem(ObservabilityRecord):
+    resident_id: str = ""
+    owner: str = ""
+    status: AttentionState = AttentionState.OPEN
+    reason: str = ""
+    category: str = ""
+    summary: str = ""
+    updated_at: datetime | None = None
+    resolved_at: datetime | None = None
+    evidence_ref: str | None = None
+    source_ref: str | None = None
+    related_work_item_id: str | None = None
+    deep_link: str | None = None
+    contract_version: str = "1.0"
+
+    def __post_init__(self) -> None:
+        ObservabilityRecord.__post_init__(self)
+        if self.updated_at is not None:
+            _aware(self.updated_at)
+        if self.resolved_at is not None:
+            _aware(self.resolved_at)
+        if self.status == AttentionState.RESOLVED and self.resolved_at is None:
+            raise ValueError("resolved attention requires resolved_at")
+
+    def to_dict(self) -> dict[str, Any]:
+        result = ObservabilityRecord.to_dict(self)
+        result["status"] = self.status.value
+        result["updated_at"] = self.updated_at.isoformat() if self.updated_at else None
+        result["resolved_at"] = self.resolved_at.isoformat() if self.resolved_at else None
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +263,7 @@ RECORD_TYPES = {
     for cls in (
         ResidentSnapshot,
         MeaningfulActivity,
+        AttentionItem,
         Ingestion,
         ModelVersion,
         EvaluationRun,

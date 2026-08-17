@@ -45,7 +45,11 @@ def private_overview(records: Iterable[Mapping[str, Any]], generated_at: datetim
     evaluations = [row for row in rows if row["kind"] == "EvaluationRun"]
     activities = [row for row in rows if row["kind"] == "MeaningfulActivity"][:8]
     ingestions = [row for row in rows if row["kind"] == "Ingestion"][:8]
-    attention = [row for row in residents if row.get("state") == "needs-attention"]
+    attention = [
+        row
+        for row in rows
+        if row["kind"] == "AttentionItem" and row.get("status") == "open"
+    ]
     return {
         "schema": "wdw.operator-overview.v1",
         "generatedAt": generated_at.isoformat(),
@@ -240,7 +244,7 @@ def public_systems_projection(
         "residents": {
             "total": len(residents),
             "active": sum(row.get("state") == "active" for row in residents),
-            "needsAttention": sum(row.get("state") == "needs-attention" for row in residents),
+            "needsAttention": len(private.get("needsHaley", [])),
         },
         "intelligence": {
             "thoughts": latest_eval.get("thought_count"),
