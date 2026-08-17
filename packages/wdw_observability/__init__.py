@@ -1,6 +1,8 @@
 """Private observability contracts and privacy-bounded projections for WDW."""
 
 from .contracts import (
+    AttentionItem,
+    AttentionState,
     ComputeUsage,
     EvaluationRun,
     EvidenceState,
@@ -16,6 +18,8 @@ from .projections import ProjectionNotReady, private_overview, public_systems_pr
 from .store import OperatorStore
 
 __all__ = [
+    "AttentionItem",
+    "AttentionState",
     "ComputeUsage",
     "EvaluationRun",
     "EvidenceState",

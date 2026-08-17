@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from wdw_observability.contracts import (
+    AttentionItem,
+    AttentionState,
     EvaluationRun,
     EvidenceState,
     Ingestion,
@@ -169,6 +171,23 @@ class CommandCenterOverviewTests(unittest.TestCase):
                 state=ResidentState.NEEDS_ATTENTION,
                 status_summary="Private status",
                 last_meaningful_activity_at=observed_at,
+            ),
+            AttentionItem(
+                record_id="attention-banjo",
+                occurred_at=observed_at,
+                observed_at=observed_at,
+                evidence_state=EvidenceState.KNOWN,
+                resident_id="banjo",
+                owner="haley",
+                status=AttentionState.OPEN,
+                reason="Operator decision required",
+                category="decision",
+                summary="Review Banjo's current request",
+                updated_at=observed_at,
+                evidence_ref="https://example.test/evidence",
+                source_ref="https://example.test/attention",
+                related_work_item_id="work-banjo",
+                deep_link="/residents/banjo",
             ),
             MeaningfulActivity(
                 record_id="activity-banjo",

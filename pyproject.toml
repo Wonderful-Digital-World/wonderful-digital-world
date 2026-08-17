@@ -12,6 +12,11 @@ license = {text = "MIT"}
 authors = [{name = "Wonderful Digital World contributors"}]
 dependencies = []
 
+[project.scripts]
+wdw-command-center = "wdw_observability.app:main"
+wdw-export-public = "wdw_observability.export_public:main"
+wdw-start = "wdw_observability.launch:main"
+
 [tool.setuptools.packages.find]
 where = ["packages"]
 include = ["wdw_*"]

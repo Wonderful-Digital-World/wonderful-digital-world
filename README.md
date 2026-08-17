@@ -150,6 +150,11 @@ architecture:
 - versioned, freshness-aware, viewer-authorized projections; and
 - one deterministic observe/understand/reconcile iteration.
 
+The private, local-only Command Center adds an operator projection over that
+world without becoming canonical state. It provides overview, resident, model,
+and embedded World View routes, plus a separately generated public projection
+whose allowlist and minimum release delay are enforced before publication.
+
 This is a reference implementation, not a deployable personal world. See
 [implementation status](docs/implementation-status.md) before building on it.
 
@@ -160,7 +165,15 @@ Requires Python 3.11 or newer and has no runtime dependencies.
 ```sh
 PYTHONPATH=packages python3 -m unittest discover -s tests -v
 PYTHONPATH=packages python3 examples/ingress_to_projection.py
+PYTHONPATH=packages python3 -m wdw_observability.launch
 ```
+
+The launcher starts the local-only Command Center on `127.0.0.1:8787` and the
+separate World View app on `127.0.0.1:3000`, waits for both health surfaces,
+prints their URLs, and shuts both down together. The Command Center reads real
+workspace evidence by default and reports missing evidence honestly; synthetic
+fixtures require the explicit `--fixtures` flag on the single-server entry
+point. See [the operator guide](docs/command-center.md).
 
 Start with [architecture](docs/architecture.md), [ontology](docs/ontology.md),
 and [invariants](docs/invariants.md). The [persistent-world example](examples/ingress_to_projection.py)

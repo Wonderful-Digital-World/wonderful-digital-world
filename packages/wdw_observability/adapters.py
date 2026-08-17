@@ -201,14 +201,14 @@ def workspace_records(workspace: Path) -> list[Any]:
         fallback = repo / "README.md"
         source = descriptor if descriptor.exists() else fallback
         if not source.exists():
-            records.append(ResidentSnapshot(f"resident-{slug}-missing", now, now, EvidenceState.UNKNOWN, slug, name, ResidentState.UNAVAILABLE, "Repository or descriptor not observed.", None))
+            records.append(ResidentSnapshot(f"resident-{slug}", now, now, EvidenceState.UNKNOWN, slug, name, ResidentState.UNAVAILABLE, "Repository or descriptor not observed.", None))
             continue
         occurred = _time(source)
         age_days = (now - occurred).days
         evidence = EvidenceState.STALE if age_days >= 7 else (EvidenceState.KNOWN if descriptor.exists() else EvidenceState.PARTIAL)
         state = ResidentState.IDLE if descriptor.exists() else ResidentState.UNAVAILABLE
         summary = f"Descriptor observed; latest source evidence is {age_days} days old." if descriptor.exists() else "Repository observed, but no resident descriptor or activity feed is available."
-        records.append(ResidentSnapshot(f"resident-{slug}-{source.stat().st_mtime_ns}", occurred, now, evidence, slug, name, state, summary, occurred))
+        records.append(ResidentSnapshot(f"resident-{slug}", occurred, now, evidence, slug, name, state, summary, occurred))
 
     report = workspace / "the-human-model" / "modeling" / "reports" / "readiness_report.md"
     if report.exists():
