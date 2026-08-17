@@ -80,10 +80,15 @@ def bridget_ingestion_records(value: Mapping[str, Any], observed_at: datetime) -
 
 
 def mini_me_review_evaluation_records(value: Mapping[str, Any], observed_at: datetime) -> list[Any]:
-    _boundary(value, "mini-me")
+    boundary_version = str(value.get("contractVersion", ""))
+    if boundary_version not in {"1.0", "2.0"} or value.get("owner") != "mini-me":
+        raise ValueError("unsupported mini-me observability boundary")
     generated = _parse_time(value.get("generatedAt"), observed_at)
     records: list[Any] = []
     for evaluation in value.get("evaluations", []):
+        if evaluation.get("evaluationRunId"):
+            records.append(_canonical_evaluation_run(evaluation, generated, observed_at))
+            continue
         occurred = _parse_time(evaluation.get("occurredAt"), generated)
         reviewed = evaluation.get("reviewedCount")
         records.append(EvaluationRun(
@@ -122,6 +127,56 @@ def mini_me_review_evaluation_records(value: Mapping[str, Any], observed_at: dat
             request_id=str(review["requestId"]) if review.get("requestId") else None,
         ))
     return records
+
+
+def _canonical_evaluation_run(
+    evaluation: Mapping[str, Any], generated: datetime, observed_at: datetime,
+) -> EvaluationRun:
+    occurred = _parse_time(evaluation.get("evaluatedAt"), generated)
+    evidence = dict(evaluation.get("evidence") or {})
+    distribution = dict(evaluation.get("scoreDistribution") or {})
+    models = tuple(dict(item) for item in evaluation.get("models", []) if isinstance(item, Mapping))
+    first_model = models[0] if models else {}
+    reproducibility = dict(evaluation.get("reproducibility") or {})
+    provenance = dict(evaluation.get("provenance") or {})
+    return EvaluationRun(
+        record_id=str(evaluation["evaluationRunId"]), occurred_at=occurred,
+        observed_at=observed_at, evidence_state=EvidenceState.KNOWN,
+        model_id=str(first_model.get("name", "")),
+        model_version=str(first_model.get("version", "")),
+        thought_count=_optional_int(evidence.get("thoughts")),
+        candidate_count=_optional_int(evidence.get("candidates")),
+        reviewed_count=_optional_int(evidence.get("reviewed")),
+        mean_similarity=_optional_float(distribution.get("mean")),
+        precision_at_k=dict(evaluation.get("precisionAtK") or {}),
+        min_similarity=_optional_float(distribution.get("min")),
+        max_similarity=_optional_float(distribution.get("max")),
+        score_distribution=distribution,
+        rank_behavior=tuple(
+            dict(item) for item in evaluation.get("rankBehavior", []) if isinstance(item, Mapping)
+        ),
+        analysis_version=(
+            str(evaluation.get("analysisVersions", [""])[0])
+            if evaluation.get("analysisVersions") else None
+        ),
+        readiness=dict(evaluation.get("readiness") or {}),
+        top_candidates=tuple(
+            dict(item) for item in evaluation.get("topCandidates", []) if isinstance(item, Mapping)
+        ),
+        source_ref=str(reproducibility.get("sourceRef")) if reproducibility.get("sourceRef") else None,
+        canonical_owner=str(provenance.get("owner", "mini-me")), read_only=True,
+        contract_version=str(evaluation.get("contractVersion", "2.0")),
+        evaluation_name=str(evaluation.get("evaluationName", "")) or None,
+        evaluation_version=str(evaluation.get("evaluationVersion", "")) or None,
+        purpose=str(evaluation.get("purpose", "")) or None,
+        dataset=dict(evaluation.get("dataset") or {}),
+        analysis_versions=tuple(str(item) for item in evaluation.get("analysisVersions", [])),
+        models=models,
+        evaluation_code_version=str(evaluation.get("evaluationCodeVersion", "")) or None,
+        reproducibility=reproducibility, evidence=evidence,
+        limitations=tuple(str(item) for item in evaluation.get("limitations", [])),
+        provenance=provenance,
+    )
 
 
 def _optional_int(value: Any) -> int | None:

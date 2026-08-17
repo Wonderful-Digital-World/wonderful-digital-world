@@ -138,24 +138,42 @@ class EvaluationRun(ObservabilityRecord):
     candidate_count: int | None = None
     reviewed_count: int | None = None
     mean_similarity: float | None = None
-    precision_at_k: float | None = None
+    precision_at_k: float | Mapping[str, Any] | None = None
     median_similarity: float | None = None
     min_similarity: float | None = None
     max_similarity: float | None = None
-    score_distribution: Mapping[str, int] = field(default_factory=dict)
-    rank_behavior: Mapping[str, Any] = field(default_factory=dict)
+    score_distribution: Mapping[str, Any] = field(default_factory=dict)
+    rank_behavior: tuple[Mapping[str, Any], ...] | Mapping[str, Any] = field(default_factory=dict)
     reciprocal_graph: Mapping[str, Any] = field(default_factory=dict)
     analysis_version: str | None = None
-    readiness: str = "unknown"
+    readiness: str | Mapping[str, Any] = "unknown"
     top_candidates: tuple[Mapping[str, Any], ...] = ()
     source_ref: str | None = None
     canonical_owner: str = "mini-me"
     read_only: bool = True
     contract_version: str = "1.0"
     availability_reason: str | None = None
+    evaluation_name: str | None = None
+    evaluation_version: str | None = None
+    purpose: str | None = None
+    dataset: Mapping[str, Any] = field(default_factory=dict)
+    analysis_versions: tuple[str, ...] = ()
+    models: tuple[Mapping[str, Any], ...] = ()
+    evaluation_code_version: str | None = None
+    reproducibility: Mapping[str, Any] = field(default_factory=dict)
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+    limitations: tuple[str, ...] = ()
+    provenance: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def precision_at_k_state(self) -> EvidenceState:
+        if isinstance(self.precision_at_k, Mapping):
+            states = {
+                str(item.get("state"))
+                for item in self.precision_at_k.values()
+                if isinstance(item, Mapping)
+            }
+            return EvidenceState.KNOWN if "available" in states else EvidenceState.INSUFFICIENT
         if self.reviewed_count is None:
             return EvidenceState.UNKNOWN
         if self.reviewed_count == 0:

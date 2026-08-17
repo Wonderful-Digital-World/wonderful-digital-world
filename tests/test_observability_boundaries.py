@@ -140,6 +140,112 @@ def test_reads_only_real_mini_me_reviews_when_evaluations_are_unavailable():
     assert review.outcome is ReviewOutcome.APPROVED
 
 
+def test_reads_canonical_mini_me_evaluation_run_snapshot():
+    records = mini_me_review_evaluation_records(
+        {
+            "contractVersion": "2.0",
+            "owner": "mini-me",
+            "generatedAt": "2026-08-17T10:00:00Z",
+            "reviews": [],
+            "evaluations": [
+                {
+                    "contractVersion": "2.0",
+                    "evaluationRunId": "eval-1",
+                    "evaluationName": "thought-intelligence-ranking",
+                    "evaluationVersion": "1",
+                    "purpose": "Evaluate ranking against complete human labels.",
+                    "dataset": {
+                        "id": "thought-intelligence-candidates",
+                        "version": "dataset-v1",
+                        "sourceCount": 72,
+                        "candidateCount": 360,
+                    },
+                    "analysisVersions": ["thought-intelligence-v1"],
+                    "models": [{"name": "text-embedding-3-small", "version": "1"}],
+                    "evaluationCodeVersion": "mini-me@ef60403",
+                    "evaluatedAt": "2026-08-17T09:00:00Z",
+                    "reproducibility": {
+                        "ks": [1, 3, 5],
+                        "eligibility": "Complete labels through K.",
+                        "sourceRef": "postgres://mini-me/evaluation-runs/eval-1",
+                    },
+                    "evidence": {
+                        "thoughts": 72,
+                        "candidates": 360,
+                        "reviewed": 0,
+                        "accepted": 0,
+                        "rejected": 0,
+                        "unsure": 0,
+                    },
+                    "scoreDistribution": {
+                        "kind": "embedding-cosine-similarity",
+                        "count": 360,
+                        "min": 0.4,
+                        "max": 0.9,
+                        "mean": 0.728,
+                        "bins": [{"lower": 0.4, "upper": 0.9, "count": 360}],
+                        "interpretation": "Diagnostic only; not model quality.",
+                    },
+                    "rankBehavior": [
+                        {
+                            "rank": 1,
+                            "candidates": 72,
+                            "reviewed": 0,
+                            "accepted": 0,
+                            "rejected": 0,
+                            "unsure": 0,
+                            "meanScore": 0.81,
+                        }
+                    ],
+                    "topCandidates": [
+                        {
+                            "analysisId": "analysis-1",
+                            "sourceThoughtId": "thought-1",
+                            "targetThoughtId": "thought-2",
+                            "rank": 1,
+                            "score": 0.88,
+                            "reviewStatus": "unreviewed",
+                        }
+                    ],
+                    "precisionAtK": {
+                        key: {
+                            "state": "unavailable",
+                            "value": None,
+                            "eligibleGroups": 0,
+                            "reason": f"No source ranking has complete human labels through K={key}.",
+                        }
+                        for key in ("1", "3", "5")
+                    },
+                    "readiness": {
+                        "state": "pending-human-review",
+                        "verdict": "unavailable",
+                        "reason": "No human relationship labels are available; model quality cannot be assessed.",
+                    },
+                    "limitations": ["Similarity is diagnostic and does not establish quality."],
+                    "provenance": {
+                        "owner": "mini-me",
+                        "evidenceSource": "canonical-postgres-rows",
+                    },
+                }
+            ],
+            "evaluationAvailability": {"state": "available", "reason": None},
+        },
+        NOW,
+    )
+
+    assert len(records) == 1
+    evaluation = records[0]
+    assert isinstance(evaluation, EvaluationRun)
+    assert evaluation.record_id == "eval-1"
+    assert evaluation.contract_version == "2.0"
+    assert evaluation.dataset["version"] == "dataset-v1"
+    assert evaluation.precision_at_k["5"]["state"] == "unavailable"
+    assert evaluation.readiness["state"] == "pending-human-review"
+    assert evaluation.score_distribution["bins"][0]["count"] == 360
+    assert evaluation.source_ref == "postgres://mini-me/evaluation-runs/eval-1"
+    assert evaluation.top_candidates[0]["targetThoughtId"] == "thought-2"
+
+
 def test_rejects_unknown_boundary_versions():
     with pytest.raises(ValueError, match="unsupported banjo"):
         banjo_activity_records(

@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlparse
 from wsgiref.simple_server import make_server
 
 from .adapters import workspace_records
-from .projections import PUBLIC_DELAY, private_overview, public_systems_projection
+from .projections import PUBLIC_DELAY, models_experience, private_overview, public_systems_projection
 from .store import OperatorStore
 
 FRESH = timedelta(hours=24)
@@ -151,22 +151,43 @@ def build_private_view(
 
     intelligence = list(result["intelligence"])
     latest_evaluation = intelligence[0] if intelligence else None
+    result["models"] = models_experience(intelligence)
+    latest_evidence = (
+        latest_evaluation.get("evidence", {})
+        if latest_evaluation and isinstance(latest_evaluation.get("evidence"), Mapping)
+        else {}
+    )
+    raw_precision = latest_evaluation.get("precision_at_k") if latest_evaluation else None
+    if isinstance(raw_precision, Mapping):
+        precision_available = any(
+            isinstance(item, Mapping) and item.get("state") == "available"
+            for item in raw_precision.values()
+        )
+        precision_summary = next(
+            (
+                item.get("value")
+                for item in raw_precision.values()
+                if isinstance(item, Mapping) and item.get("state") == "available"
+            ),
+            None,
+        )
+        precision_state = "known" if precision_available else "insufficient-evidence"
+    else:
+        precision_summary = raw_precision
+        reviewed = latest_evaluation.get("reviewed_count") if latest_evaluation else None
+        precision_state = (
+            "unknown" if reviewed is None else
+            "insufficient-evidence" if reviewed == 0 else
+            "known" if raw_precision is not None else "unknown"
+        )
     result["intelligenceSummary"] = {
         "state": latest_evaluation.get("evidence_state", "unknown") if latest_evaluation else "unknown",
         "freshness": _freshness(latest_evaluation.get("occurred_at"), now) if latest_evaluation else _freshness(None, now),
-        "thoughts": latest_evaluation.get("thought_count") if latest_evaluation else None,
-        "candidates": latest_evaluation.get("candidate_count") if latest_evaluation else None,
-        "reviewed": latest_evaluation.get("reviewed_count") if latest_evaluation else None,
-        "precisionAtK": latest_evaluation.get("precision_at_k") if latest_evaluation else None,
-        "precisionAtKState": (
-            "unknown"
-            if not latest_evaluation or latest_evaluation.get("reviewed_count") is None
-            else "insufficient-evidence"
-            if latest_evaluation.get("reviewed_count") == 0
-            else "known"
-            if latest_evaluation.get("precision_at_k") is not None
-            else "unknown"
-        ),
+        "thoughts": (latest_evaluation.get("thought_count") if latest_evaluation else None) or latest_evidence.get("thoughts"),
+        "candidates": (latest_evaluation.get("candidate_count") if latest_evaluation else None) or latest_evidence.get("candidates"),
+        "reviewed": (latest_evaluation.get("reviewed_count") if latest_evaluation else None) if latest_evaluation and latest_evaluation.get("reviewed_count") is not None else latest_evidence.get("reviewed"),
+        "precisionAtK": precision_summary,
+        "precisionAtKState": precision_state,
     }
 
     latest_activity = _latest(rows, "MeaningfulActivity")
@@ -270,12 +291,117 @@ def _empty(message: str) -> str:
     return f'<div class="empty">{html.escape(message)}</div>'
 
 
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _sequence(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def _number(value: Any, digits: int = 3) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return _text(value)
+    return f"{value:.{digits}f}".rstrip("0").rstrip(".")
+
+
+def _models_content(models: Mapping[str, Any]) -> str:
+    availability = _mapping(models.get("availability"))
+    latest = _mapping(models.get("latest"))
+    if not latest:
+        return f"""
+          <section><h2>Models</h2>{_empty(str(availability.get('reason') or 'No canonical evaluation run is available.'))}
+          <p class="meta">Model-quality claims require a persisted canonical evaluation-run snapshot. Transient reports and similarity scores are diagnostic evidence, not quality measurements.</p></section>
+        """
+
+    readiness = _mapping(latest.get("readiness"))
+    evidence = _mapping(latest.get("evidence"))
+    dataset = _mapping(latest.get("dataset"))
+    provenance = _mapping(latest.get("provenance"))
+    reproducibility = _mapping(latest.get("reproducibility"))
+    distribution = _mapping(latest.get("scoreDistribution"))
+    history = _mapping(models.get("history"))
+    precision = _mapping(latest.get("precisionAtK"))
+    comparison = _mapping(history.get("comparison"))
+
+    precision_html = "".join(
+        (
+            f'<article><span>P@{key}</span><strong>{_number(item.get("value"))}</strong>'
+            f'<small>{_text(item.get("eligibleGroups"), "0")} fully labeled source rankings</small></article>'
+            if item.get("state") == "available" and item.get("value") is not None
+            else f'<article><span>P@{key}</span><strong>Unavailable</strong><small>{_text(item.get("reason"), "Human labels are insufficient for this K.")}</small></article>'
+        )
+        for key in ("1", "3", "5")
+        for item in [_mapping(precision.get(key))]
+    )
+    model_labels = ", ".join(
+        f'{_text(_mapping(model).get("name"))}@{_text(_mapping(model).get("version"))}'
+        for model in _sequence(latest.get("models"))
+    ) or "Unknown"
+    analysis_versions = ", ".join(_text(value) for value in _sequence(latest.get("analysisVersions"))) or "Unknown"
+    provenance_rows = [
+        ("Run", latest.get("runId")), ("Evaluated", latest.get("evaluatedAt")),
+        ("Dataset", f'{dataset.get("id", "Unknown")} @ {dataset.get("version", "Unknown")}'),
+        ("Dataset population", f'{dataset.get("sourceCount", "Unknown")} sources · {dataset.get("candidateCount", "Unknown")} candidates'),
+        ("Models", model_labels), ("Analysis versions", analysis_versions),
+        ("Evaluation code", latest.get("evaluationCodeVersion")),
+        ("Evidence owner/source", f'{provenance.get("owner", "Unknown")} · {provenance.get("evidenceSource", "Unknown")}'),
+        ("Human labels", provenance.get("humanLabels")),
+        ("Reproduction source", reproducibility.get("sourceRef")),
+    ]
+    provenance_html = "".join(
+        f'<tr><th>{_text(label)}</th><td>{_text(value)}</td></tr>' for label, value in provenance_rows
+    )
+    bins_html = "".join(
+        f'<tr><td>{_number(_mapping(item).get("lower"))}–{_number(_mapping(item).get("upper"))}</td><td>{_text(_mapping(item).get("count"))}</td></tr>'
+        for item in _sequence(distribution.get("bins"))
+    ) or '<tr><td colspan="2">No distribution bins recorded.</td></tr>'
+    rank_html = "".join(
+        f'<tr><td>{_text(row.get("rank"))}</td><td>{_text(row.get("candidates"))}</td><td>{_text(row.get("reviewed"))}</td>'
+        f'<td>{_text(row.get("accepted"))}/{_text(row.get("rejected"))}/{_text(row.get("unsure"))}</td><td>{_number(row.get("meanScore"))}</td></tr>'
+        for source in _sequence(latest.get("rankBehavior")) for row in [_mapping(source)]
+    ) or '<tr><td colspan="5">No rank behavior recorded.</td></tr>'
+    candidates_html = "".join(
+        f'<tr><td>{_text(row.get("sourceThoughtId"))}</td><td>{_text(row.get("targetThoughtId"))}</td>'
+        f'<td>{_text(row.get("rank"))}</td><td>{_number(row.get("score"))}</td><td>{_badge(row.get("reviewStatus"))}</td></tr>'
+        for source in _sequence(latest.get("topCandidates")) for row in [_mapping(source)]
+    ) or '<tr><td colspan="5">No top candidates recorded.</td></tr>'
+    comparison_html = "".join(
+        (
+            f'<tr><td>P@{key}</td><td>{_number(item.get("current"))}</td><td>{_number(item.get("previous"))}</td><td>{_number(item.get("delta"))}</td></tr>'
+            if item.get("state") == "available"
+            else f'<tr><td>P@{key}</td><td colspan="3">Unavailable — {_text(item.get("reason"))}</td></tr>'
+        )
+        for key in ("1", "3", "5") for item in [_mapping(comparison.get(key))]
+    )
+    limitations_html = "".join(f"<li>{_text(item)}</li>" for item in _sequence(latest.get("limitations"))) or "<li>None recorded.</li>"
+    return f"""
+      <section><h2>Models</h2>
+        <div class="model-heading"><div>{_badge(readiness.get('state'))} {_badge(readiness.get('verdict'))}</div><strong>{_text(latest.get('evaluationName'))} · {_text(latest.get('evaluationVersion'))}</strong></div>
+        <p>{_text(readiness.get('reason'))}</p><p class="meta">{_text(latest.get('purpose'))}</p>
+        <div class="metrics">
+          <article><span>Thoughts</span><strong>{_text(evidence.get('thoughts'))}</strong></article><article><span>Candidates</span><strong>{_text(evidence.get('candidates'))}</strong></article>
+          <article><span>Reviewed</span><strong>{_text(evidence.get('reviewed'))}</strong></article><article><span>Accepted</span><strong>{_text(evidence.get('accepted'))}</strong></article>
+        </div><h3>Human-labeled precision</h3><div class="metrics">{precision_html}</div>
+        <p class="note">Similarity scores show embedding proximity. They do not establish model quality without sufficient human relationship labels.</p>
+        <div class="subgrid"><div><h3>Provenance &amp; reproducibility</h3><div class="table"><table class="compact"><tbody>{provenance_html}</tbody></table></div></div>
+        <div><h3>Score distribution</h3><p>{_text(distribution.get('interpretation'))}</p><p class="meta">{_text(distribution.get('kind'))} · n={_text(distribution.get('count'))} · min {_number(distribution.get('min'))} · mean {_number(distribution.get('mean'))} · max {_number(distribution.get('max'))}</p><div class="table"><table class="compact"><thead><tr><th>Range</th><th>Count</th></tr></thead><tbody>{bins_html}</tbody></table></div></div></div>
+        <h3>Rank behavior</h3><div class="table"><table><thead><tr><th>Rank</th><th>Candidates</th><th>Reviewed</th><th>Accepted / Rejected / Unsure</th><th>Mean score</th></tr></thead><tbody>{rank_html}</tbody></table></div>
+        <h3>Top candidates</h3><div class="table"><table><thead><tr><th>Source thought</th><th>Target thought</th><th>Rank</th><th>Similarity</th><th>Human label</th></tr></thead><tbody>{candidates_html}</tbody></table></div>
+        <h3>Historical comparison</h3><p class="meta">{_text(history.get('compatibleRuns'), '0')} compatible runs · {_text(history.get('excludedRuns'), '0')} excluded as incomparable · baseline {_text(history.get('baselineRunId'), 'none')}</p>
+        <div class="table"><table class="compact"><thead><tr><th>Measure</th><th>Current</th><th>Previous</th><th>Delta</th></tr></thead><tbody>{comparison_html}</tbody></table></div>
+        <h3>Limitations</h3><ul>{limitations_html}</ul>
+      </section>
+    """
+
+
 def _private_content(view: Mapping[str, Any], scan_error: str | None) -> str:
     needs = view["needsHaley"]
     residents = view["residents"]
     activity = view["recentActivity"]
     ingestions = view["recentIngestions"]
     intelligence = view["intelligenceSummary"]
+    models = view["models"]
     health = view["systemHealth"]
 
     warning = (
@@ -329,6 +455,7 @@ def _private_content(view: Mapping[str, Any], scan_error: str | None) -> str:
         <article><span>Reviewed</span><strong>{_text(intelligence.get("reviewed"))}</strong></article>
         <article><span>Precision@K</span><strong>{precision}</strong></article>
       </div><p class="meta">{_badge(intelligence.get("state"))} {_badge(intelligence.get("freshness", {}).get("state"))} {_text(intelligence.get("freshness", {}).get("label"))}</p></section>
+      {_models_content(models)}
       <section><h2>System Health</h2><div class="cards health">{health_html}</div></section>
       <section><h2>Recent Activity</h2><div class="stack">{activity_html}</div></section>
       <section><h2>Recent Data Ingestions</h2><div class="table"><table><thead><tr><th>Source</th><th>Status</th><th>Items</th><th>Freshness</th><th>Deep link</th></tr></thead><tbody>{ingestion_html}</tbody></table></div></section>
@@ -375,7 +502,7 @@ def render_page(view: Mapping[str, Any], *, mode: str, scan_error: str | None = 
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Wonderful Digital World · Command Center</title>
 <style>
-:root{{--ink:#16211d;--muted:#617069;--paper:#f4f2ea;--panel:#fffdf7;--line:#d9d6ca;--green:#296248;--amber:#976515;--red:#9b3f38;--blue:#335f7b}}*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 system-ui,sans-serif}}header,main{{max-width:1240px;margin:auto}}header{{padding:38px 34px 22px;display:flex;justify-content:space-between;gap:24px;align-items:end}}h1{{font:700 34px/1.1 Georgia,serif;margin:4px 0}}h2{{font:700 23px/1.2 Georgia,serif;margin:0 0 16px}}.eyebrow,.meta,small{{color:var(--muted)}}nav{{display:flex;background:#e7e4da;border-radius:10px;padding:4px}}nav a{{padding:8px 13px;border-radius:7px;color:var(--ink);text-decoration:none}}nav a.active{{background:var(--panel);box-shadow:0 1px 3px #0002}}main{{padding:0 34px 54px}}section{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin:0 0 18px}}.cards,.metrics{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}}.cards article,.stack article,.metrics article{{border:1px solid var(--line);border-radius:10px;padding:14px}}article div{{display:flex;gap:8px;align-items:center}}article p{{margin:9px 0;color:var(--muted)}}.metrics article{{display:flex;flex-direction:column}}.metrics strong{{font:700 26px/1.2 Georgia,serif;margin-top:6px}}.stack{{display:grid;gap:10px}}.table{{overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:760px}}th,td{{text-align:left;padding:12px;border-bottom:1px solid var(--line);vertical-align:top}}th{{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}}td small{{display:block}}a{{color:var(--blue)}}.badge{{display:inline-block;padding:2px 7px;border-radius:999px;background:#e3e5e2;color:#45514c;font-size:11px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}}.badge.known,.badge.fresh,.badge.active,.badge.complete,.badge.success{{background:#d9eadf;color:var(--green)}}.badge.partial,.badge.aging,.badge.needs-attention{{background:#f2e4c4;color:var(--amber)}}.badge.stale,.badge.attention,.badge.failed,.badge.error{{background:#f1d8d5;color:var(--red)}}.empty,.warning{{border:1px dashed var(--line);border-radius:10px;padding:18px;color:var(--muted)}}.warning{{border-style:solid;border-color:#d7b56d;background:#fff5dc;margin-bottom:18px}}.warning span{{display:block;font-size:12px;margin-top:4px}}@media(max-width:800px){{header{{align-items:start;flex-direction:column}}.cards,.metrics{{grid-template-columns:1fr 1fr}}}}@media(max-width:520px){{.cards,.metrics{{grid-template-columns:1fr}}header,main{{padding-left:18px;padding-right:18px}}}}
+:root{{--ink:#16211d;--muted:#617069;--paper:#f4f2ea;--panel:#fffdf7;--line:#d9d6ca;--green:#296248;--amber:#976515;--red:#9b3f38;--blue:#335f7b}}*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 system-ui,sans-serif}}header,main{{max-width:1240px;margin:auto}}header{{padding:38px 34px 22px;display:flex;justify-content:space-between;gap:24px;align-items:end}}h1{{font:700 34px/1.1 Georgia,serif;margin:4px 0}}h2{{font:700 23px/1.2 Georgia,serif;margin:0 0 16px}}h3{{font:700 17px/1.2 Georgia,serif;margin:24px 0 10px}}.eyebrow,.meta,small{{color:var(--muted)}}nav{{display:flex;background:#e7e4da;border-radius:10px;padding:4px}}nav a{{padding:8px 13px;border-radius:7px;color:var(--ink);text-decoration:none}}nav a.active{{background:var(--panel);box-shadow:0 1px 3px #0002}}main{{padding:0 34px 54px}}section{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin:0 0 18px}}.cards,.metrics{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}}.cards article,.stack article,.metrics article{{border:1px solid var(--line);border-radius:10px;padding:14px}}article div{{display:flex;gap:8px;align-items:center}}article p{{margin:9px 0;color:var(--muted)}}.metrics article{{display:flex;flex-direction:column}}.metrics strong{{font:700 26px/1.2 Georgia,serif;margin-top:6px}}.stack{{display:grid;gap:10px}}.subgrid{{display:grid;grid-template-columns:1fr 1fr;gap:24px}}.model-heading{{display:flex;align-items:center;gap:10px;flex-wrap:wrap}}.note{{border-left:3px solid var(--amber);padding:9px 12px;background:#fff8e8;color:var(--muted)}}.table{{overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:760px}}table.compact{{min-width:420px}}th,td{{text-align:left;padding:12px;border-bottom:1px solid var(--line);vertical-align:top}}th{{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}}td small{{display:block}}a{{color:var(--blue)}}.badge{{display:inline-block;padding:2px 7px;border-radius:999px;background:#e3e5e2;color:#45514c;font-size:11px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}}.badge.known,.badge.fresh,.badge.active,.badge.complete,.badge.success,.badge.ready,.badge.measured,.badge.available{{background:#d9eadf;color:var(--green)}}.badge.partial,.badge.aging,.badge.needs-attention,.badge.partial-evidence,.badge.evidence-limited{{background:#f2e4c4;color:var(--amber)}}.badge.stale,.badge.attention,.badge.failed,.badge.error,.badge.pending-human-review,.badge.unavailable{{background:#f1d8d5;color:var(--red)}}.empty,.warning{{border:1px dashed var(--line);border-radius:10px;padding:18px;color:var(--muted)}}.warning{{border-style:solid;border-color:#d7b56d;background:#fff5dc;margin-bottom:18px}}.warning span{{display:block;font-size:12px;margin-top:4px}}@media(max-width:800px){{header{{align-items:start;flex-direction:column}}.cards,.metrics,.subgrid{{grid-template-columns:1fr 1fr}}}}@media(max-width:520px){{.cards,.metrics,.subgrid{{grid-template-columns:1fr}}header,main{{padding-left:18px;padding-right:18px}}}}
 </style></head><body><header><div><div class="eyebrow">OPERATOR OVERVIEW · REAL OBSERVATIONS</div><h1>Command Center</h1><div class="meta">Generated {_text(view.get('generatedAt'), 'now')} · {_text(mode.title())} view</div></div><nav aria-label="Preview mode"><a class="{private_active}" href="/overview?view=private">Private</a><a class="{public_active}" href="/overview?view=public">Public preview</a></nav></header><main>{content}</main></body></html>"""
     return document.encode("utf-8")
 
