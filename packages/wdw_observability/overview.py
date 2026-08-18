@@ -28,6 +28,7 @@ OVERVIEW_RECORD_KINDS = (
     "Ingestion",
     "EvaluationRun",
     "AttentionItem",
+    "MorningInsightOperation",
 )
 
 
@@ -154,6 +155,14 @@ def build_private_view(
         ingestions.append(row)
     result["recentIngestions"] = ingestions
 
+    morning_insights: list[dict[str, Any]] = []
+    for source in result["morningInsights"]:
+        row = dict(source)
+        row["freshness"] = _freshness(row.get("completed_at") or row.get("occurred_at"), now)
+        row["deepLink"] = _record_link(row)
+        morning_insights.append(row)
+    result["morningInsights"] = morning_insights
+
     intelligence = list(result["intelligence"])
     latest_evaluation = intelligence[0] if intelligence else None
     result["models"] = models_experience(intelligence)
@@ -197,6 +206,19 @@ def build_private_view(
 
     latest_activity = _latest(rows, "MeaningfulActivity")
     latest_ingestion = _latest(rows, "Ingestion")
+    latest_morning = _latest(rows, "MorningInsightOperation")
+    morning_stages = set((latest_morning or {}).get("stages") or ())
+    morning_execution_state = (
+        "failed"
+        if "failed" in morning_stages
+        else "incomplete"
+        if "incomplete" in morning_stages
+        else "completed"
+        if "completed" in morning_stages
+        else "pending"
+        if latest_morning
+        else "unknown"
+    )
     ingestion_state = "unknown"
     if latest_ingestion:
         ingestion_state = (
@@ -240,6 +262,18 @@ def build_private_view(
             "state": result["intelligenceSummary"]["state"],
             "freshness": result["intelligenceSummary"]["freshness"],
             "detail": "Evaluation evidence is available" if latest_evaluation else "No evaluation run observed",
+        },
+        {
+            "name": "Morning insight delivery",
+            "state": latest_morning.get("status", "unknown") if latest_morning else "unknown",
+            "freshness": _freshness(
+                (latest_morning or {}).get("completed_at") or (latest_morning or {}).get("occurred_at"), now
+            ),
+            "detail": (
+                f"Execution {morning_execution_state} · "
+                f"delivery {latest_morning.get('delivery_status', 'unknown')}"
+                if latest_morning else "No morning insight operation observed"
+            ),
         },
     ]
     return result
@@ -308,6 +342,50 @@ def _number(value: Any, digits: int = 3) -> str:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return _text(value)
     return f"{value:.{digits}f}".rstrip("0").rstrip(".")
+
+
+def _structured(value: Any, fallback: str = "Not reported") -> str:
+    if value is None or value == "" or value == [] or value == {}:
+        return html.escape(fallback)
+    if isinstance(value, (Mapping, list, tuple)):
+        return html.escape(json.dumps(value, ensure_ascii=False, sort_keys=True))
+    return _text(value, fallback)
+
+
+def _morning_insights_content(rows: Iterable[Mapping[str, Any]]) -> str:
+    cards: list[str] = []
+    for row in rows:
+        insight = _mapping(row.get("insight"))
+        evidence = _mapping(row.get("evidence"))
+        failure = _mapping(row.get("failure"))
+        identifiers = " · ".join(
+            f"{label} {_text(row.get(field))}"
+            for label, field in (
+                ("invocation", "invocation_id"), ("output", "output_message_id"),
+                ("delivery", "delivery_id"), ("transport", "transport_message_id"),
+                ("external", "external_message_id"),
+            )
+            if row.get(field)
+        ) or "No execution or delivery identifiers reported"
+        cards.append(f"""
+          <article class="morning-insight">
+            <div>{_badge(row.get('status'))}{_badge(row.get('delivery_status'))}<strong>{_text(row.get('occurrence_id'), 'Unknown occurrence')}</strong></div>
+            <h3>{_text(insight.get('text'), 'No insight text recorded')}</h3>
+            <p><strong>Insight:</strong> {_text(insight.get('id'), 'Not reported')} · <strong>Evidence:</strong> {_structured(evidence.get('basis'))}</p>
+            <p><strong>Source refs:</strong> {_structured(evidence.get('source_refs'))}</p>
+            <p><strong>Personalization:</strong> {_structured(row.get('personalization'))}</p>
+            <p><strong>Current state:</strong> {_structured(row.get('current_state'))}</p>
+            <p><strong>Recent observations:</strong> {_structured(row.get('recent_observations'))}</p>
+            <p><strong>Historical context:</strong> {_structured(row.get('historical_context'))}</p>
+            <p><strong>Prediction:</strong> {_structured(row.get('prediction'))}</p>
+            <p><strong>Runtime:</strong> {_text(row.get('provider'))} / {_text(row.get('model'))} / {_text(row.get('model_version'))}</p>
+            <p><strong>Stages:</strong> {_structured(row.get('stages'))}</p>
+            <p><strong>Warnings:</strong> {_structured(row.get('warnings'), 'None')} · <strong>Failure:</strong> {_structured(failure, 'None')}</p>
+            <small>{html.escape(identifiers)} · {_text(_mapping(row.get('freshness')).get('label'))} {_link(row.get('deepLink'), 'Source')}</small>
+          </article>
+        """)
+    content = "".join(cards) or _empty("No morning insight operation has been observed.")
+    return f'<section><h2>Morning Insights</h2><div class="stack">{content}</div></section>'
 
 
 def _models_content(models: Mapping[str, Any]) -> str:
@@ -405,6 +483,7 @@ def _private_content(view: Mapping[str, Any], scan_error: str | None) -> str:
     residents = view["residents"]
     activity = view["recentActivity"]
     ingestions = view["recentIngestions"]
+    morning_insights = view["morningInsights"]
     intelligence = view["intelligenceSummary"]
     models = view["models"]
     health = view["systemHealth"]
@@ -463,6 +542,7 @@ def _private_content(view: Mapping[str, Any], scan_error: str | None) -> str:
         <article><span>Precision@K</span><strong>{precision}</strong></article>
       </div><p class="meta">{_badge(intelligence.get("state"))} {_badge(intelligence.get("freshness", {}).get("state"))} {_text(intelligence.get("freshness", {}).get("label"))}</p></section>
       {_models_content(models)}
+      {_morning_insights_content(morning_insights)}
       <section><h2>System Health</h2><div class="cards health">{health_html}</div></section>
       <section><h2>Recent Activity</h2><div class="stack">{activity_html}</div></section>
       <section><h2>Recent Data Ingestions</h2><div class="table"><table><thead><tr><th>Source</th><th>Status</th><th>Items</th><th>Freshness</th><th>Deep link</th></tr></thead><tbody>{ingestion_html}</tbody></table></div></section>
@@ -509,7 +589,7 @@ def render_page(view: Mapping[str, Any], *, mode: str, scan_error: str | None = 
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Wonderful Digital World · Command Center</title>
 <style>
-:root{{--ink:#16211d;--muted:#617069;--paper:#f4f2ea;--panel:#fffdf7;--line:#d9d6ca;--green:#296248;--amber:#976515;--red:#9b3f38;--blue:#335f7b}}*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 system-ui,sans-serif}}header,main{{max-width:1240px;margin:auto}}header{{padding:38px 34px 22px;display:flex;justify-content:space-between;gap:24px;align-items:end}}h1{{font:700 34px/1.1 Georgia,serif;margin:4px 0}}h2{{font:700 23px/1.2 Georgia,serif;margin:0 0 16px}}h3{{font:700 17px/1.2 Georgia,serif;margin:24px 0 10px}}.eyebrow,.meta,small{{color:var(--muted)}}nav{{display:flex;background:#e7e4da;border-radius:10px;padding:4px}}nav a{{padding:8px 13px;border-radius:7px;color:var(--ink);text-decoration:none}}nav a.active{{background:var(--panel);box-shadow:0 1px 3px #0002}}main{{padding:0 34px 54px}}section{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin:0 0 18px}}.cards,.metrics{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}}.cards article,.stack article,.metrics article{{border:1px solid var(--line);border-radius:10px;padding:14px}}article div{{display:flex;gap:8px;align-items:center}}article p{{margin:9px 0;color:var(--muted)}}.metrics article{{display:flex;flex-direction:column}}.metrics strong{{font:700 26px/1.2 Georgia,serif;margin-top:6px}}.stack{{display:grid;gap:10px}}.subgrid{{display:grid;grid-template-columns:1fr 1fr;gap:24px}}.model-heading{{display:flex;align-items:center;gap:10px;flex-wrap:wrap}}.note{{border-left:3px solid var(--amber);padding:9px 12px;background:#fff8e8;color:var(--muted)}}.table{{overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:760px}}table.compact{{min-width:420px}}th,td{{text-align:left;padding:12px;border-bottom:1px solid var(--line);vertical-align:top}}th{{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}}td small{{display:block}}a{{color:var(--blue)}}.badge{{display:inline-block;padding:2px 7px;border-radius:999px;background:#e3e5e2;color:#45514c;font-size:11px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}}.badge.known,.badge.fresh,.badge.active,.badge.complete,.badge.success,.badge.ready,.badge.measured,.badge.available{{background:#d9eadf;color:var(--green)}}.badge.partial,.badge.aging,.badge.needs-attention,.badge.partial-evidence,.badge.evidence-limited{{background:#f2e4c4;color:var(--amber)}}.badge.stale,.badge.attention,.badge.failed,.badge.error,.badge.pending-human-review,.badge.unavailable{{background:#f1d8d5;color:var(--red)}}.empty,.warning{{border:1px dashed var(--line);border-radius:10px;padding:18px;color:var(--muted)}}.warning{{border-style:solid;border-color:#d7b56d;background:#fff5dc;margin-bottom:18px}}.warning span{{display:block;font-size:12px;margin-top:4px}}@media(max-width:800px){{header{{align-items:start;flex-direction:column}}.cards,.metrics,.subgrid{{grid-template-columns:1fr 1fr}}}}@media(max-width:520px){{.cards,.metrics,.subgrid{{grid-template-columns:1fr}}header,main{{padding-left:18px;padding-right:18px}}}}
+:root{{--ink:#16211d;--muted:#617069;--paper:#f4f2ea;--panel:#fffdf7;--line:#d9d6ca;--green:#296248;--amber:#976515;--red:#9b3f38;--blue:#335f7b}}*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 system-ui,sans-serif}}header,main{{max-width:1240px;margin:auto}}header{{padding:38px 34px 22px;display:flex;justify-content:space-between;gap:24px;align-items:end}}h1{{font:700 34px/1.1 Georgia,serif;margin:4px 0}}h2{{font:700 23px/1.2 Georgia,serif;margin:0 0 16px}}h3{{font:700 17px/1.2 Georgia,serif;margin:24px 0 10px}}.eyebrow,.meta,small{{color:var(--muted)}}nav{{display:flex;background:#e7e4da;border-radius:10px;padding:4px}}nav a{{padding:8px 13px;border-radius:7px;color:var(--ink);text-decoration:none}}nav a.active{{background:var(--panel);box-shadow:0 1px 3px #0002}}main{{padding:0 34px 54px}}section{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin:0 0 18px}}.cards,.metrics{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}}.cards article,.stack article,.metrics article{{border:1px solid var(--line);border-radius:10px;padding:14px}}article div{{display:flex;gap:8px;align-items:center}}article p{{margin:9px 0;color:var(--muted)}}.metrics article{{display:flex;flex-direction:column}}.metrics strong{{font:700 26px/1.2 Georgia,serif;margin-top:6px}}.stack{{display:grid;gap:10px}}.subgrid{{display:grid;grid-template-columns:1fr 1fr;gap:24px}}.model-heading{{display:flex;align-items:center;gap:10px;flex-wrap:wrap}}.note{{border-left:3px solid var(--amber);padding:9px 12px;background:#fff8e8;color:var(--muted)}}.table{{overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:760px}}table.compact{{min-width:420px}}th,td{{text-align:left;padding:12px;border-bottom:1px solid var(--line);vertical-align:top}}th{{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}}td small{{display:block}}a{{color:var(--blue)}}.badge{{display:inline-block;padding:2px 7px;border-radius:999px;background:#e3e5e2;color:#45514c;font-size:11px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}}.badge.known,.badge.fresh,.badge.active,.badge.complete,.badge.completed,.badge.delivered,.badge.success,.badge.ready,.badge.measured,.badge.available{{background:#d9eadf;color:var(--green)}}.badge.partial,.badge.aging,.badge.needs-attention,.badge.partial-evidence,.badge.evidence-limited,.badge.incomplete,.badge.queued,.badge.pending{{background:#f2e4c4;color:var(--amber)}}.badge.stale,.badge.attention,.badge.failed,.badge.error,.badge.pending-human-review,.badge.unavailable{{background:#f1d8d5;color:var(--red)}}.empty,.warning{{border:1px dashed var(--line);border-radius:10px;padding:18px;color:var(--muted)}}.warning{{border-style:solid;border-color:#d7b56d;background:#fff5dc;margin-bottom:18px}}.warning span{{display:block;font-size:12px;margin-top:4px}}@media(max-width:800px){{header{{align-items:start;flex-direction:column}}.cards,.metrics,.subgrid{{grid-template-columns:1fr 1fr}}}}@media(max-width:520px){{.cards,.metrics,.subgrid{{grid-template-columns:1fr}}header,main{{padding-left:18px;padding-right:18px}}}}
 </style></head><body><header><div><div class="eyebrow">OPERATOR OVERVIEW · REAL OBSERVATIONS</div><h1>Command Center</h1><div class="meta">Generated {_text(view.get('generatedAt'), 'now')} · {_text(mode.title())} view</div></div><nav aria-label="Preview mode"><a class="{private_active}" href="/overview?view=private">Private</a><a class="{public_active}" href="/overview?view=public">Public preview</a></nav></header><main>{content}</main></body></html>"""
     return document.encode("utf-8")
 

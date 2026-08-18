@@ -9,11 +9,18 @@ from urllib.request import urlopen
 
 from .contracts import (
     EvaluationRun, EvidenceState, Ingestion, MeaningfulActivity, ModelVersion,
-    ResidentSnapshot, ResidentState, ReviewDecision, ReviewOutcome,
+    MorningInsightOperation, ResidentSnapshot, ResidentState, ReviewDecision, ReviewOutcome,
 )
 
 DISPLAY_NAMES = {"bridget": "Bridget", "coach": "Coach", "mini-me": "Mini Me", "banjo": "Banjo"}
 CONTRACT_VERSION = "1.0"
+MORNING_INSIGHT_EVENT_TYPES = frozenset({
+    "scheduled", "started", "personalization_read", "current_state_read",
+    "recent_observations_read", "historical_context_read", "prediction_used",
+    "prediction_unavailable", "prediction_not_needed", "insight_selected",
+    "insight_composed", "telegram_queued", "completed", "incomplete", "failed",
+    "telegram_delivered", "telegram_delivery_failed",
+})
 
 
 def _time(path: Path) -> datetime:
@@ -32,6 +39,111 @@ def _parse_time(value: Any, fallback: datetime) -> datetime:
 def _boundary(value: Mapping[str, Any], owner: str) -> None:
     if value.get("contractVersion") != CONTRACT_VERSION or value.get("owner") != owner:
         raise ValueError(f"unsupported {owner} observability boundary")
+
+
+def agent_harness_morning_insight_records(
+    events: list[Mapping[str, Any]], observed_at: datetime, source_ref: str | None = None,
+) -> list[MorningInsightOperation]:
+    """Collapse append-only producer events into read-only operational projections."""
+    grouped: dict[str, list[tuple[datetime, str, dict[str, Any]]]] = {}
+    for event in events:
+        _boundary(event, "agent-harness")
+        if event.get("operation") != "coach_morning_insight":
+            raise ValueError("unsupported agent-harness operation")
+        occurrence_id = str(event.get("occurrenceId", "")).strip()
+        event_type = str(event.get("eventType", ""))
+        details = event.get("details") or {}
+        if not occurrence_id or event_type not in MORNING_INSIGHT_EVENT_TYPES:
+            raise ValueError("invalid morning-insight observability event")
+        if not isinstance(details, Mapping):
+            raise ValueError("morning-insight event details must be an object")
+        occurred_at = _parse_time(event.get("occurredAt"), observed_at)
+        grouped.setdefault(occurrence_id, []).append((occurred_at, event_type, dict(details)))
+
+    records: list[MorningInsightOperation] = []
+    read_fields = {
+        "personalization_read": "personalization",
+        "current_state_read": "current_state",
+        "recent_observations_read": "recent_observations",
+        "historical_context_read": "historical_context",
+    }
+    for occurrence_id, raw_events in grouped.items():
+        ordered = sorted(raw_events, key=lambda item: item[0])
+        values: dict[str, Any] = {field: {} for field in read_fields.values()}
+        values.update({"insight": {}, "evidence": {}, "prediction": {}, "failure": {}})
+        warnings: list[str] = []
+        identifiers: dict[str, str | None] = {
+            "invocation_id": None, "output_message_id": None, "delivery_id": None,
+            "transport_message_id": None, "external_message_id": None,
+        }
+        provider = model = model_version = None
+        execution_completed = False
+        execution_failed = False
+        delivery_status: str | None = None
+        for _, event_type, details in ordered:
+            if event_type in read_fields:
+                values[read_fields[event_type]] = details
+            elif event_type.startswith("prediction_"):
+                values["prediction"] = {
+                    "status": event_type.removeprefix("prediction_"), **details,
+                }
+            elif event_type == "insight_selected":
+                insight = details.get("insight")
+                evidence = details.get("evidence")
+                values["insight"] = dict(insight) if isinstance(insight, Mapping) else details
+                values["evidence"] = dict(evidence) if isinstance(evidence, Mapping) else {}
+            elif event_type == "completed":
+                execution_completed = True
+            elif event_type == "failed":
+                execution_failed = True
+                values["failure"] = details
+            elif event_type == "incomplete":
+                values["failure"] = details
+            elif event_type in {"telegram_queued", "telegram_delivered", "telegram_delivery_failed"}:
+                delivery_status = {
+                    "telegram_queued": "queued",
+                    "telegram_delivered": "delivered",
+                    "telegram_delivery_failed": "failed",
+                }[event_type]
+                if delivery_status == "failed":
+                    values["failure"] = details
+
+            provider = str(details["provider"]) if details.get("provider") else provider
+            model = str(details["model"]) if details.get("model") else model
+            model_version = str(details["modelVersion"]) if details.get("modelVersion") else model_version
+            for external, internal in (
+                ("invocationId", "invocation_id"), ("outputMessageId", "output_message_id"),
+                ("deliveryId", "delivery_id"), ("transportMessageId", "transport_message_id"),
+                ("externalMessageId", "external_message_id"),
+            ):
+                if details.get(external):
+                    identifiers[internal] = str(details[external])
+            raw_warnings = details.get("warnings") or ()
+            if isinstance(raw_warnings, (list, tuple)):
+                warnings.extend(str(item) for item in raw_warnings)
+            if details.get("warning"):
+                warnings.append(str(details["warning"]))
+
+        if execution_failed or delivery_status == "failed":
+            status = "failed"
+        elif execution_completed and delivery_status == "delivered":
+            status = "completed"
+        else:
+            status = "incomplete"
+        records.append(MorningInsightOperation(
+            record_id=f"morning-insight:{occurrence_id}", occurrence_id=occurrence_id,
+            occurred_at=ordered[-1][0], observed_at=observed_at,
+            evidence_state=(EvidenceState.KNOWN if status != "incomplete" else EvidenceState.PARTIAL),
+            status=status, stages=tuple(item[1] for item in ordered),
+            insight=values["insight"], evidence=values["evidence"],
+            personalization=values["personalization"], current_state=values["current_state"],
+            recent_observations=values["recent_observations"],
+            historical_context=values["historical_context"], prediction=values["prediction"],
+            provider=provider, model=model, model_version=model_version,
+            warnings=tuple(dict.fromkeys(warnings)), failure=values["failure"],
+            delivery_status=delivery_status, source_ref=source_ref, **identifiers,
+        ))
+    return records
 
 
 def banjo_activity_records(value: Mapping[str, Any], observed_at: datetime) -> list[MeaningfulActivity]:
@@ -237,4 +349,15 @@ def workspace_records(workspace: Path) -> list[Any]:
     elif mini_me_url:
         with urlopen(mini_me_url, timeout=2) as response:
             records.extend(mini_me_review_evaluation_records(json.load(response), now))
+
+    morning_insight_path = Path(os.environ.get(
+        "WDW_AGENT_HARNESS_MORNING_INSIGHT_LOG",
+        workspace / "agent-harness" / ".agent-harness" / "observability" / "morning-insight-v1.jsonl",
+    ))
+    if morning_insight_path.is_file():
+        events = [
+            json.loads(line) for line in morning_insight_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        records.extend(agent_harness_morning_insight_records(events, now, str(morning_insight_path)))
     return records

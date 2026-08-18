@@ -258,6 +258,37 @@ class ComputeUsage(ObservabilityRecord):
     provenance: Mapping[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class MorningInsightOperation(ObservabilityRecord):
+    occurrence_id: str = ""
+    operation: str = "coach_morning_insight"
+    status: str = "incomplete"
+    stages: tuple[str, ...] = ()
+    insight: Mapping[str, Any] = field(default_factory=dict)
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+    personalization: Mapping[str, Any] = field(default_factory=dict)
+    current_state: Mapping[str, Any] = field(default_factory=dict)
+    recent_observations: Mapping[str, Any] = field(default_factory=dict)
+    historical_context: Mapping[str, Any] = field(default_factory=dict)
+    prediction: Mapping[str, Any] = field(default_factory=dict)
+    provider: str | None = None
+    model: str | None = None
+    model_version: str | None = None
+    warnings: tuple[str, ...] = ()
+    failure: Mapping[str, Any] = field(default_factory=dict)
+    invocation_id: str | None = None
+    output_message_id: str | None = None
+    delivery_id: str | None = None
+    transport_message_id: str | None = None
+    external_message_id: str | None = None
+    delivery_status: str | None = None
+    source_ref: str | None = None
+    contract_version: str = "1.0"
+    operational_owner: str = "agent-harness"
+    canonical_owner: str = "human-model"
+    read_only: bool = True
+
+
 RECORD_TYPES = {
     cls.__name__: cls
     for cls in (
@@ -269,5 +300,6 @@ RECORD_TYPES = {
         EvaluationRun,
         ReviewDecision,
         ComputeUsage,
+        MorningInsightOperation,
     )
 }

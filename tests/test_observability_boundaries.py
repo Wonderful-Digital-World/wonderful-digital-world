@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from wdw_observability.adapters import (
+    agent_harness_morning_insight_records,
     banjo_activity_records,
     bridget_ingestion_records,
     mini_me_review_evaluation_records,
@@ -13,12 +14,100 @@ from wdw_observability.contracts import (
     EvaluationRun,
     Ingestion,
     MeaningfulActivity,
+    MorningInsightOperation,
     ReviewDecision,
     ReviewOutcome,
 )
 
 
 NOW = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+
+
+def _morning_event(event_type: str, details: dict | None = None, minute: int = 0) -> dict:
+    return {
+        "contractVersion": "1.0",
+        "owner": "agent-harness",
+        "operation": "coach_morning_insight",
+        "occurrenceId": "morning-2026-08-17",
+        "eventType": event_type,
+        "occurredAt": f"2026-08-17T06:{minute:02d}:00Z",
+        "details": details or {},
+    }
+
+
+def test_projects_morning_insight_only_as_completed_after_telegram_delivery():
+    records = agent_harness_morning_insight_records(
+        [
+            _morning_event("scheduled", {"invocationId": "invoke-1"}),
+            _morning_event("started", minute=1),
+            _morning_event("personalization_read", {"tone": "direct"}, 2),
+            _morning_event("current_state_read", {"energy": "steady"}, 3),
+            _morning_event("recent_observations_read", {"count": 3}, 4),
+            _morning_event("historical_context_read", {"days": 30}, 5),
+            _morning_event(
+                "prediction_used",
+                {
+                    "predictionId": "prediction-1",
+                    "version": "v2",
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "modelVersion": "2026-08-01",
+                },
+                6,
+            ),
+            _morning_event(
+                "insight_selected",
+                {
+                    "insight": {"id": "insight-1", "text": "Protect the first hour."},
+                    "evidence": {"basis": "sleep and calendar", "source_refs": ["observation:1"]},
+                },
+                7,
+            ),
+            _morning_event("insight_composed", minute=8),
+            _morning_event("telegram_queued", {"deliveryId": "delivery-1"}, 9),
+            _morning_event("completed", {"outputMessageId": "output-1"}, 10),
+            _morning_event(
+                "telegram_delivered",
+                {"transportMessageId": "transport-1", "externalMessageId": "telegram-1"},
+                11,
+            ),
+        ],
+        NOW,
+        "agent-harness/.agent-harness/observability/morning-insight-v1.jsonl",
+    )
+
+    assert len(records) == 1
+    operation = records[0]
+    assert isinstance(operation, MorningInsightOperation)
+    assert operation.status == "completed"
+    assert operation.delivery_status == "delivered"
+    assert operation.operational_owner == "agent-harness"
+    assert operation.canonical_owner == "human-model"
+    assert operation.read_only is True
+    assert operation.insight["id"] == "insight-1"
+    assert operation.evidence["source_refs"] == ["observation:1"]
+    assert operation.provider == "openai"
+    assert operation.model == "gpt-test"
+    assert operation.model_version == "2026-08-01"
+    assert operation.invocation_id == "invoke-1"
+    assert operation.output_message_id == "output-1"
+    assert operation.delivery_id == "delivery-1"
+    assert operation.transport_message_id == "transport-1"
+    assert operation.external_message_id == "telegram-1"
+
+
+def test_morning_insight_remains_incomplete_while_telegram_is_only_queued():
+    records = agent_harness_morning_insight_records(
+        [
+            _morning_event("scheduled"),
+            _morning_event("telegram_queued", {"deliveryId": "delivery-1"}, 1),
+            _morning_event("completed", {"outputMessageId": "output-1"}, 2),
+        ],
+        NOW,
+    )
+
+    assert records[0].status == "incomplete"
+    assert records[0].delivery_status == "queued"
 
 
 def test_reads_banjo_owned_activity_with_compute_history():

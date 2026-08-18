@@ -7,10 +7,10 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from .contracts import AttentionItem, ObservabilityRecord, ResidentSnapshot, ReviewDecision
+from .contracts import AttentionItem, MorningInsightOperation, ObservabilityRecord, ResidentSnapshot, ReviewDecision
 
 
-MUTABLE_RECORD_TYPES = (ResidentSnapshot, AttentionItem)
+MUTABLE_RECORD_TYPES = (ResidentSnapshot, AttentionItem, MorningInsightOperation)
 MUTABLE_KINDS = {record_type.__name__ for record_type in MUTABLE_RECORD_TYPES}
 
 
