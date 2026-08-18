@@ -45,6 +45,7 @@ def private_overview(records: Iterable[Mapping[str, Any]], generated_at: datetim
     evaluations = [row for row in rows if row["kind"] == "EvaluationRun"]
     activities = [row for row in rows if row["kind"] == "MeaningfulActivity"][:8]
     ingestions = [row for row in rows if row["kind"] == "Ingestion"][:8]
+    morning_insights = [row for row in rows if row["kind"] == "MorningInsightOperation"][:8]
     attention = [
         row
         for row in rows
@@ -62,6 +63,7 @@ def private_overview(records: Iterable[Mapping[str, Any]], generated_at: datetim
         },
         "recentActivity": activities,
         "recentIngestions": ingestions,
+        "morningInsights": morning_insights,
     }
 
 

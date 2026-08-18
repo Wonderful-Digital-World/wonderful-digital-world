@@ -263,6 +263,7 @@ class CommandCenterOverviewTests(unittest.TestCase):
             "Residents",
             "Intelligence Summary",
             "Models",
+            "Morning Insights",
             "System Health",
             "Recent Activity",
             "Recent Data Ingestions",
@@ -279,7 +280,7 @@ class CommandCenterOverviewTests(unittest.TestCase):
         self.assertEqual(overview["schema"], "wdw.operator-overview.v1")
         self.assertEqual(overview["intelligenceSummary"]["precisionAtK"], 0.8)
         self.assertEqual(overview["models"]["availability"]["state"], "unavailable")
-        self.assertEqual(len(overview["systemHealth"]), 4)
+        self.assertEqual(len(overview["systemHealth"]), 5)
 
     def test_models_requires_a_canonical_run_and_exposes_unavailable_precision(self) -> None:
         self.store.append_many(
