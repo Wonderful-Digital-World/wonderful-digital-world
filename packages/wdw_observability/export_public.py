@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timedelta, timezone
+import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .adapters import workspace_records
-from .projections import private_overview, public_systems_projection
+from .public_release import (
+    ReleaseNotReady,
+    create_candidate,
+    release_delay_from_environment,
+    release_latest_eligible,
+)
 from .sample import synthetic_records
 from .store import OperatorStore
 
@@ -21,6 +27,7 @@ def _event_time(row: dict[str, object]) -> datetime:
 def releasable_records(
     records: list[dict[str, object]], *, now: datetime, delay: timedelta
 ) -> tuple[list[dict[str, object]], datetime]:
+    """Retain the legacy per-record delay helper for API compatibility."""
     cutoff = now - delay
     eligible = [row for row in records if _event_time(row) <= cutoff]
     source_time = max((_event_time(row) for row in eligible), default=cutoff)
@@ -28,16 +35,32 @@ def releasable_records(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Export the delayed, allowlisted public Systems projection.")
+    parser = argparse.ArgumentParser(
+        description="Create and publish delayed, allowlisted WDW public projections."
+    )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--database", type=Path)
-    source.add_argument("--workspace", type=Path, help="Read real projections from the WDW workspace.")
-    source.add_argument("--sample", action="store_true", help="Use explicitly synthetic fixtures.")
-    parser.add_argument("--delay-hours", type=float, default=24)
-    parser.add_argument("--output", type=Path)
+    source.add_argument(
+        "--workspace", type=Path, help="Read real projections from the WDW workspace."
+    )
+    source.add_argument(
+        "--sample", action="store_true", help="Use explicitly synthetic fixtures."
+    )
+    parser.add_argument(
+        "--delay-hours",
+        type=float,
+        help="Test/dev override; production is fixed at 24.",
+    )
+    parser.add_argument(
+        "--state-root", type=Path, default=Path(".wdw/public-projection")
+    )
+    parser.add_argument(
+        "--publish-root", type=Path, help="Website's public/projections/wdw directory."
+    )
+    parser.add_argument("--candidate-only", action="store_true")
     args = parser.parse_args()
-    now = datetime.now(timezone.utc)
-    delay = timedelta(hours=args.delay_hours)
+    now = datetime.now(UTC)
+    delay = release_delay_from_environment(args.delay_hours)
     if args.sample:
         records = [
             {"kind": type(record).__name__, **record.to_dict()}
@@ -50,14 +73,18 @@ def main() -> None:
         ]
     elif args.database:
         records = OperatorStore(args.database).records(limit=1000)
-    records, source_time = releasable_records(records, now=now, delay=delay)
-    private = private_overview(records, source_time)
-    public = public_systems_projection(private, now=now, delay=delay)
-    payload = json.dumps(public, indent=2) + "\n"
-    if args.output:
-        args.output.write_text(payload, encoding="utf-8")
-    else:
-        print(payload, end="")
+    candidate = create_candidate(
+        records, state_root=args.state_root, now=now, delay=delay
+    )
+    result: dict[str, object] = {"candidate": candidate, "release": None}
+    if not args.candidate_only:
+        try:
+            result["release"] = release_latest_eligible(
+                state_root=args.state_root, now=now, publish_root=args.publish_root
+            )
+        except ReleaseNotReady as error:
+            print(str(error), file=sys.stderr)
+    print(json.dumps(result, indent=2), end="\n")
 
 
 if __name__ == "__main__":

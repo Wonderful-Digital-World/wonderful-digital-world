@@ -15,6 +15,7 @@ dependencies = []
 [project.scripts]
 wdw-command-center = "wdw_observability.app:main"
 wdw-export-public = "wdw_observability.export_public:main"
+wdw-publish-public = "wdw_observability.publish_public:main"
 wdw-start = "wdw_observability.launch:main"
 
 [tool.setuptools.packages.find]
