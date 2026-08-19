@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.wonderfuldigitalworld.public-projection</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>wdw-publish-public --workspace '/PRIVATE/WDW/WORKSPACE' --state-root '/PRIVATE/WDW/STATE/public-projection' --website-repo '/PRIVATE/CHECKOUT/haleyparks329.github.io' --commit --push</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/PRIVATE/WDW/STATE/public-projection/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/PRIVATE/WDW/STATE/public-projection/stderr.log</string>
+</dict>
+</plist>
