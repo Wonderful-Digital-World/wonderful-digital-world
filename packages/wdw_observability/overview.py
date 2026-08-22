@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import html
 import json
+from socketserver import ThreadingMixIn
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
-from wsgiref.simple_server import make_server
+from wsgiref.simple_server import WSGIServer, make_server
 
 from .projections import PUBLIC_DELAY, models_experience, private_overview, public_systems_projection
 from .refresh import ProjectionRefresher
@@ -30,6 +31,12 @@ OVERVIEW_RECORD_KINDS = (
     "AttentionItem",
     "MorningInsightOperation",
 )
+
+
+class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
+    """Keep one slow browser connection from blocking the operator surface."""
+
+    daemon_threads = True
 
 
 def _overview_records(store: OperatorStore) -> list[dict[str, Any]]:
@@ -667,7 +674,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     refresher.refresh(force=True)
     application = create_app(store, workspace=args.workspace, refresher=refresher)
-    with make_server(args.host, args.port, application) as server:
+    with make_server(
+        args.host,
+        args.port,
+        application,
+        server_class=ThreadingWSGIServer,
+    ) as server:
         print(f"Command Center: http://{args.host}:{args.port}/overview?view=private")
         server.serve_forever()
     return 0

@@ -18,14 +18,29 @@ WORLD_SCHEMA = "wdw.world.v1"
 SYSTEMS_SCHEMA = "wdw.systems.v1"
 MANIFEST_SCHEMA = "wdw.public-release-manifest.v1"
 ALLOWED_STATUSES = frozenset(
-    {"idle", "active", "waiting", "needs-attention", "unavailable"}
+    {
+        "idle", "active", "working", "thinking", "waiting", "blocked",
+        "needs_human", "error", "offline", "needs-attention", "unavailable",
+    }
 )
 RESIDENTS = {
     "bridget": ("Bridget", "Orchestrator", "workshop"),
-    "coach": ("Coach", "Coaching resident", "workshop"),
+    "coach": ("Coach", "Coaching resident", "lab"),
     "mini-me": ("Mini Me", "Research resident", "lab"),
     "banjo": ("Banjo", "Engineering resident", "workshop"),
 }
+
+
+def _resident_aggregates(statuses: Iterable[str]) -> dict[str, int]:
+    values = list(statuses)
+    return {
+        "total": len(values),
+        "active": sum(value in {"active", "working", "thinking"} for value in values),
+        "needsAttention": sum(
+            value in {"needs-attention", "needs_human", "blocked", "error"}
+            for value in values
+        ),
+    }
 PLACES = (
     {
         "placeId": "workshop",
@@ -198,7 +213,6 @@ def build_artifacts(
     if "bridget" not in snapshots:
         raise ValueError("canonical Bridget state unavailable")
 
-    attention_count = sum(row["status"] == "needs-attention" for row in residents)
     evaluations = [row for row in rows if row.get("kind") == "EvaluationRun"]
     latest_evaluation = max(
         evaluations,
@@ -250,11 +264,7 @@ def build_artifacts(
         "sourceObservedAt": _stamp(source_observed_at),
         "releaseDelayHours": delay.total_seconds() / 3600,
         "state": state,
-        "residents": {
-            "total": len(residents),
-            "active": sum(row["status"] == "active" for row in residents),
-            "needsAttention": attention_count,
-        },
+        "residents": _resident_aggregates(row["status"] for row in residents),
         "intelligence": {
             "thoughts": latest_evaluation.get("thought_count"),
             "candidates": latest_evaluation.get("candidate_count"),
@@ -606,11 +616,7 @@ def _release_latest_eligible_unlocked(
     ):
         raise ValueError("candidate and artifact metadata do not match")
     resident_statuses = [resident["status"] for resident in world["residents"]]
-    expected_residents = {
-        "total": len(resident_statuses),
-        "active": resident_statuses.count("active"),
-        "needsAttention": resident_statuses.count("needs-attention"),
-    }
+    expected_residents = _resident_aggregates(resident_statuses)
     if systems["residents"] != expected_residents:
         raise ValueError("systems resident aggregate does not match world artifact")
     if (

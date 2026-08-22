@@ -27,6 +27,13 @@ class EvidenceState(StrEnum):
 class ResidentState(StrEnum):
     ACTIVE = "active"
     IDLE = "idle"
+    WORKING = "working"
+    THINKING = "thinking"
+    WAITING = "waiting"
+    BLOCKED = "blocked"
+    NEEDS_HUMAN = "needs_human"
+    ERROR = "error"
+    OFFLINE = "offline"
     NEEDS_ATTENTION = "needs-attention"
     UNAVAILABLE = "unavailable"
 
@@ -70,7 +77,7 @@ class ObservabilityRecord:
 class ResidentSnapshot(ObservabilityRecord):
     resident_id: str = ""
     display_name: str = ""
-    state: ResidentState = ResidentState.UNAVAILABLE
+    state: ResidentState = ResidentState.OFFLINE
     status_summary: str = ""
     last_meaningful_activity_at: datetime | None = None
 

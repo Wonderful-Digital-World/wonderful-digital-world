@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.request import urlopen
@@ -14,6 +14,13 @@ from .contracts import (
 
 DISPLAY_NAMES = {"bridget": "Bridget", "coach": "Coach", "mini-me": "Mini Me", "banjo": "Banjo"}
 CONTRACT_VERSION = "1.0"
+RUNTIME_ACTIVITY_SCHEMA = "wdw.resident-activity.v1"
+RUNTIME_ACTIVITY_STATES = frozenset({
+    ResidentState.IDLE, ResidentState.WORKING, ResidentState.THINKING,
+    ResidentState.WAITING, ResidentState.BLOCKED, ResidentState.NEEDS_HUMAN,
+    ResidentState.ERROR, ResidentState.OFFLINE,
+})
+DEFAULT_ACTIVITY_STALE_AFTER = timedelta(minutes=15)
 MORNING_INSIGHT_EVENT_TYPES = frozenset({
     "scheduled", "started", "personalization_read", "current_state_read",
     "recent_observations_read", "historical_context_read", "prediction_used",
@@ -34,6 +41,93 @@ def _parse_time(value: Any, fallback: datetime) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError("boundary timestamps must be timezone-aware")
     return parsed
+
+
+def _resident_activity_event(raw: Mapping[str, Any], observed_at: datetime) -> ResidentSnapshot:
+    if raw.get("schema") != RUNTIME_ACTIVITY_SCHEMA:
+        raise ValueError("resident activity has an unsupported schema")
+    event_id = raw.get("eventId")
+    resident_id = raw.get("residentId")
+    summary = raw.get("summary")
+    if not isinstance(event_id, str) or not event_id.strip():
+        raise ValueError("resident activity eventId must be a non-empty string")
+    if resident_id not in DISPLAY_NAMES:
+        raise ValueError(f"resident activity has unknown residentId: {resident_id!r}")
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("resident activity summary must be a non-empty string")
+    try:
+        state = ResidentState(raw.get("state"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"resident activity has invalid state: {raw.get('state')!r}") from exc
+    if state not in RUNTIME_ACTIVITY_STATES:
+        raise ValueError(f"resident activity state is not canonical: {state.value}")
+    if not raw.get("occurredAt"):
+        raise ValueError("resident activity occurredAt is required")
+    occurred_at = _parse_time(raw.get("occurredAt"), observed_at)
+    references = raw.get("evidenceReferences")
+    if not isinstance(references, list) or any(
+        not isinstance(reference, str) or not reference.strip() for reference in references
+    ):
+        raise ValueError("resident activity evidenceReferences must be a list of strings")
+    run_id = raw.get("runId")
+    if run_id is not None and (not isinstance(run_id, str) or not run_id.strip()):
+        raise ValueError("resident activity runId must be non-empty when present")
+    return ResidentSnapshot(
+        event_id, occurred_at, observed_at, EvidenceState.KNOWN,
+        str(resident_id), DISPLAY_NAMES[str(resident_id)], state, summary.strip(), occurred_at,
+    )
+
+
+def resident_activity_records(
+    events: list[Mapping[str, Any]],
+    observed_at: datetime,
+    stale_after: timedelta = DEFAULT_ACTIVITY_STALE_AFTER,
+) -> list[ResidentSnapshot]:
+    """Select the newest runtime event per resident and expire stale truth."""
+    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        raise ValueError("observed_at must be timezone-aware")
+    if stale_after.total_seconds() <= 0:
+        raise ValueError("stale_after must be positive")
+    newest: dict[str, ResidentSnapshot] = {}
+    for raw in events:
+        snapshot = _resident_activity_event(raw, observed_at)
+        current = newest.get(snapshot.resident_id)
+        if current is None or snapshot.occurred_at > current.occurred_at:
+            newest[snapshot.resident_id] = snapshot
+    records: list[ResidentSnapshot] = []
+    for resident_id in DISPLAY_NAMES:
+        snapshot = newest.get(resident_id)
+        if snapshot is None:
+            continue
+        if observed_at - snapshot.occurred_at > stale_after:
+            snapshot = ResidentSnapshot(
+                snapshot.record_id, snapshot.occurred_at, observed_at, EvidenceState.STALE,
+                snapshot.resident_id, snapshot.display_name, ResidentState.OFFLINE,
+                "Runtime activity signal expired.", snapshot.occurred_at,
+            )
+        records.append(snapshot)
+    return records
+
+
+def load_resident_activity(
+    path: Path,
+    observed_at: datetime,
+    stale_after: timedelta = DEFAULT_ACTIVITY_STALE_AFTER,
+) -> list[ResidentSnapshot]:
+    if not path.is_file():
+        return []
+    events: list[Mapping[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid resident activity JSON on line {line_number}") from exc
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"resident activity line {line_number} must be an object")
+        events.append(raw)
+    return resident_activity_records(events, observed_at, stale_after)
 
 
 def _boundary(value: Mapping[str, Any], owner: str) -> None:
@@ -313,14 +407,31 @@ def workspace_records(workspace: Path) -> list[Any]:
         fallback = repo / "README.md"
         source = descriptor if descriptor.exists() else fallback
         if not source.exists():
-            records.append(ResidentSnapshot(f"resident-{slug}", now, now, EvidenceState.UNKNOWN, slug, name, ResidentState.UNAVAILABLE, "Repository or descriptor not observed.", None))
+            records.append(ResidentSnapshot(f"resident-{slug}", now, now, EvidenceState.UNKNOWN, slug, name, ResidentState.OFFLINE, "Repository or descriptor not observed.", None))
             continue
         occurred = _time(source)
         age_days = (now - occurred).days
         evidence = EvidenceState.STALE if age_days >= 7 else (EvidenceState.KNOWN if descriptor.exists() else EvidenceState.PARTIAL)
-        state = ResidentState.IDLE if descriptor.exists() else ResidentState.UNAVAILABLE
+        state = ResidentState.IDLE if descriptor.exists() else ResidentState.OFFLINE
         summary = f"Descriptor observed; latest source evidence is {age_days} days old." if descriptor.exists() else "Repository observed, but no resident descriptor or activity feed is available."
         records.append(ResidentSnapshot(f"resident-{slug}", occurred, now, evidence, slug, name, state, summary, occurred))
+
+    activity_path = Path(os.environ.get(
+        "WDW_RESIDENT_ACTIVITY_LOG", workspace / ".wdw" / "resident-activity-v1.jsonl",
+    ))
+    try:
+        activity_ttl = timedelta(seconds=int(os.environ.get("WDW_RESIDENT_ACTIVITY_TTL_SECONDS", "900")))
+    except ValueError as exc:
+        raise ValueError("WDW_RESIDENT_ACTIVITY_TTL_SECONDS must be an integer") from exc
+    runtime_by_resident = {
+        record.resident_id: record
+        for record in load_resident_activity(activity_path, now, activity_ttl)
+    }
+    records = [
+        runtime_by_resident.get(record.resident_id, record)
+        if isinstance(record, ResidentSnapshot) else record
+        for record in records
+    ]
 
     report = workspace / "the-human-model" / "modeling" / "reports" / "readiness_report.md"
     if report.exists():

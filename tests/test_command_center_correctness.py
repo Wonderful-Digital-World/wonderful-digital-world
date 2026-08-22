@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from wdw_observability.app import create_app
+from wdw_observability.launch import _parser as launch_parser
 from wdw_observability.contracts import (
     AttentionItem,
     AttentionState,
@@ -106,6 +107,13 @@ class CommandCenterCorrectnessTests(unittest.TestCase):
         row = self.store.records()[0]
         self.assertEqual(row["kind"], "MeaningfulActivity")
         self.assertEqual(row["activity_kind"], "delivery")
+
+    def test_integrated_launcher_refreshes_on_world_view_poll_cadence(self) -> None:
+        self.assertEqual(launch_parser().parse_args([]).refresh_seconds, 5.0)
+        self.assertEqual(
+            launch_parser().parse_args(["--refresh-seconds", "1.5"]).refresh_seconds,
+            1.5,
+        )
 
     def test_mutable_projection_updates_but_immutable_history_does_not(self) -> None:
         self.assertTrue(self.store.append(snapshot("First")))

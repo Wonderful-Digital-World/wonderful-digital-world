@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from wdw_observability.app import create_app
 from wdw_observability.contracts import EvaluationRun, EvidenceState, ReviewDecision, ReviewOutcome
@@ -77,6 +78,27 @@ class ObservabilityTests(unittest.TestCase):
             overview = json.loads(payload)
             self.assertEqual(overview["schema"], "wdw.operator-overview.v1")
             self.assertEqual(overview["health"]["state"], "unknown")
+
+    def test_world_route_keeps_embed_mounted_while_service_starts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = create_app(
+                OperatorStore(Path(directory) / "operator.sqlite3"),
+                world_url="http://127.0.0.1:3000/rooms",
+            )
+            statuses = []
+            with patch("wdw_observability.app._is_online", return_value=False) as is_online:
+                response = b"".join(
+                    app(
+                        {"PATH_INFO": "/world"},
+                        lambda status, headers: statuses.append(status),
+                    )
+                )
+
+            self.assertEqual(statuses, ["200 OK"])
+            is_online.assert_called_once_with("http://127.0.0.1:3000/api/health")
+            self.assertIn(b'src="http://127.0.0.1:3000/rooms?mode=display"', response)
+            self.assertIn(b"starting or temporarily unavailable", response)
+            self.assertNotIn(b"The world is not running", response)
 
 
 if __name__ == "__main__":

@@ -53,6 +53,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--command-port", type=int, default=8787)
     parser.add_argument("--world-port", type=int, default=3000)
+    parser.add_argument("--refresh-seconds", type=float, default=5.0)
     parser.add_argument("--timeout", type=float, default=60)
     return parser
 
@@ -70,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         1 <= port <= 65535 for port in (args.command_port, args.world_port)
     ):
         raise SystemExit("Choose two distinct valid ports")
+    if args.refresh_seconds <= 0:
+        raise SystemExit("--refresh-seconds must be positive")
     if not (core / "packages" / "wdw_observability").is_dir() or not (world / "package.json").is_file():
         raise SystemExit(f"Expected the split repositories beneath {workspace}")
 
@@ -80,12 +83,16 @@ def main(argv: list[str] | None = None) -> int:
         filter(None, (str(core / "packages"), command_env.get("PYTHONPATH", "")))
     )
     command_env["WDW_WORLD_VIEW_URL"] = f"{world_url}/rooms"
+    command_env["WDW_WORLD_VIEW_HEALTH_URL"] = f"{world_url}/api/health"
+    world_env = os.environ.copy()
+    world_env["WDW_COMMAND_CENTER_URL"] = command_url
     processes: list[subprocess.Popen[bytes]] = []
     try:
         processes.append(
             subprocess.Popen(
                 [sys.executable, "-m", "wdw_observability.app", "--workspace", str(workspace),
-                 "--database", str(database), "--host", args.host, "--port", str(args.command_port)],
+                 "--database", str(database), "--host", args.host, "--port", str(args.command_port),
+                 "--refresh-seconds", str(args.refresh_seconds)],
                 cwd=core, env=command_env, start_new_session=True,
             )
         )
@@ -93,11 +100,11 @@ def main(argv: list[str] | None = None) -> int:
             subprocess.Popen(
                 ["pnpm", "--dir", str(world), "exec", "next", "dev", "--webpack",
                  "--hostname", args.host, "--port", str(args.world_port)],
-                cwd=world_repository, start_new_session=True,
+                cwd=world_repository, env=world_env, start_new_session=True,
             )
         )
-        _wait_for(f"{command_url}/healthz", processes, args.timeout)
-        _wait_for(f"{world_url}/rooms", processes, args.timeout)
+        _wait_for(f"{command_url}/api/overview?view=private", processes, args.timeout)
+        _wait_for(f"{world_url}/api/health", processes, args.timeout)
         print(f"Command Center: {command_url}", flush=True)
         print(f"World View:     {world_url}/rooms", flush=True)
         while all(process.poll() is None for process in processes):

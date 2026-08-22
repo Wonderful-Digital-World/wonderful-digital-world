@@ -17,11 +17,19 @@ from wdw_observability.contracts import (
     ResidentSnapshot,
     ResidentState,
 )
-from wdw_observability.overview import create_app
+from socketserver import ThreadingMixIn
+
+from wdw_observability.overview import ThreadingWSGIServer, create_app
 from wdw_observability.store import OperatorStore
 
 NOW = datetime(2026, 8, 17, 12, tzinfo=UTC)
 OLD = NOW - timedelta(days=2)
+
+
+class CommandCenterServerTests(unittest.TestCase):
+    def test_server_handles_browser_connections_concurrently(self) -> None:
+        self.assertTrue(issubclass(ThreadingWSGIServer, ThreadingMixIn))
+        self.assertTrue(ThreadingWSGIServer.daemon_threads)
 
 
 def _canonical_evaluation(

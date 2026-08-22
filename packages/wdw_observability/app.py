@@ -97,7 +97,12 @@ def _is_online(url: str) -> bool:
 def create_app(store: OperatorStore | None = None, *, mode: str = "real", world_url: str | None = None, world_health_url: str | None = None, refresher: ProjectionRefresher | None = None):
     operator_store = store or OperatorStore(Path(os.environ.get("WDW_COMMAND_CENTER_DB", "wdw-command-center.sqlite3")))
     configured_world = world_url or os.environ.get("WDW_WORLD_VIEW_URL", "http://127.0.0.1:3000/rooms")
-    health_url = world_health_url or configured_world.removesuffix("/rooms") + "/"
+    world_embed_url = f"{configured_world}{'&' if '?' in configured_world else '?'}mode=display"
+    health_url = (
+        world_health_url
+        or os.environ.get("WDW_WORLD_VIEW_HEALTH_URL")
+        or configured_world.removesuffix("/rooms") + "/api/health"
+    )
 
     def application(environ: dict[str, object], start_response: StartResponse):
         path = unquote(str(environ.get("PATH_INFO", "/"))).rstrip("/") or "/"
@@ -118,7 +123,18 @@ def create_app(store: OperatorStore | None = None, *, mode: str = "real", world_
         if path == "/overview": payload = _page("Overview", _overview_body(overview))
         elif path == "/models": payload = _page("Models", _models_body(records))
         elif path == "/world":
-            body = f'<span class="eyebrow">Existing World View projection</span><h1>Move through the world.</h1><iframe title="World View" src="{_escape(configured_world)}"></iframe>' if _is_online(health_url) else '<span class="eyebrow">World View / offline</span><h1>The world is not running.</h1><article class="card"><p class="unknown">World View did not answer its local health check. The Command Center remains available.</p><p>Start both services with <code>wdw-start</code>. This route never executes arbitrary shell commands.</p></article>'
+            online = _is_online(health_url)
+            status = (
+                '<p class="meta">World View connected.</p>'
+                if online
+                else '<article class="card attention"><p class="unknown">World View is starting or temporarily unavailable. The embedded view remains attached and will appear when the service answers.</p></article>'
+            )
+            body = (
+                '<span class="eyebrow">Existing World View projection</span>'
+                '<h1>Move through the world.</h1>'
+                f"{status}"
+                f'<iframe title="World View" src="{_escape(world_embed_url)}"></iframe>'
+            )
             payload = _page("World", body)
         elif path.startswith("/residents/"):
             body = _resident_body(path.removeprefix("/residents/"), records)
