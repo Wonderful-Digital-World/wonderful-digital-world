@@ -10,7 +10,9 @@ repository, release cadence, and license.
 - **[QA Agents](https://github.com/haleyparks329/qa-agents)** contributed reusable patterns—durable shared state, stable issue
   fingerprints, advisory routing, and explicit outcomes—without defining WDW.
 - **[World View / Tiny Places](https://github.com/Wonderful-Digital-World/world-view)** may render authorized projections. It does not own
-  canonical state or orchestrate the environment.
+  residents, evidence, work, canonical state, or orchestration. Tiny Places
+  supplies the inherited visual/runtime foundation; WDW-specific adaptation
+  consumes bounded projections without changing that ownership boundary.
 
 Integration occurs through versioned data and command contracts. No independent
 project is imported merely to make a diagram appear complete.

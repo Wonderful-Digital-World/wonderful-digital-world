@@ -11,7 +11,12 @@ The public ontology is intentionally small.
 | Outcome | `acted`, `blocked`, or `abstained`, with a reason | Final for that work item |
 | Projection | Versioned, scoped rendering of world state | Disposable view, not source of truth |
 | Authority | Explicit capabilities held by a subject | Yes for the attempted effect |
+| Place | Stable contextual address for interaction or projection | Identity may be durable; presentation is not canonical |
 
 A domain owner—not a shared resident—owns canonical domain state. [Human Model](https://github.com/haleyparks329/the-human-model),
 [Bridget](https://github.com/haleyparks329/bridget-architecture), and other residents may contribute interpretations under their own
 contracts; none is mandatory for every artifact.
+
+Receipt/evidence, communication/work coordination, resident interpretation, and
+domain state are intentionally separate. Unknown is a valid state at every
+boundary; no coordination mechanism is permitted to invent a domain fact.

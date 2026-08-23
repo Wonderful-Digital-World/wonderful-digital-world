@@ -10,6 +10,11 @@ and continued because it durably records:
 - actions, authority decisions, idempotency keys, and outcomes; and
 - projection revisions and freshness metadata.
 
+Evidence and pending work therefore survive worker, resident, process, and
+interface replacement. An unresolved item remains durable and unresolved until
+an authorized owner can decide it; continuity does not require manufacturing an
+answer.
+
 The reference `Inbox` is in-memory so its behavior is easy to inspect; it proves
 contracts, not durability across process restarts. A production adapter must make
 the persist-before-acknowledge and deduplication boundaries transactional.

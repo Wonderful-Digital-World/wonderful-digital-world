@@ -17,3 +17,7 @@
 15. Escalate ambiguity or irreversible consequences to human judgment.
 16. Do not let an interface become canonical state.
 17. Keep lived data out of public fixtures and documentation.
+18. Keep receipt/evidence, communication/work state, resident reasoning, and
+    domain-owned canonical state distinct.
+19. Let evidence and work survive the resident or worker currently handling it.
+20. Treat a place as context, never as proof of domain state or authority.

@@ -3,6 +3,11 @@
 Inside WDW are durable world state, evidence, work, domain ownership, resident
 protocols, policy, action records, and projection contracts.
 
+The core distinguishes durable receipt/evidence from coordination state,
+resident reasoning, and domain-owned canonical state. A transport receipt is
+not a resident interpretation; a work item is not a domain fact; and a proposal
+is not a confirmed mutation.
+
 Outside the core are:
 
 - source systems reached through connectors;
@@ -14,6 +19,9 @@ Outside the core are:
 Connectors translate transport data and preserve provenance; they do not decide
 domain meaning. Tools perform effects after authority checks; they do not infer
 permission. Interfaces consume projections; they do not own world truth.
+
+Places are contextual addresses used by projections and interactions. Their
+visual treatment is replaceable and does not own residents or domain state.
 
 The public repository documents the seam. A real deployment must supply durable
 storage, authentication, authorization policy, secrets, production connectors,

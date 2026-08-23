@@ -12,3 +12,8 @@ must not infer authorization from possession of an identifier.
 Projection producers should minimize disclosed fields, state unknowns, and use
 stable semantic keys. Consumers should tolerate additive fields and reject
 unsupported major contract versions.
+
+A place is a contextual key carried by a projection, not a claim that the
+projection owns the resident or domain shown there. A projection can lag, omit,
+or simplify authorized state; absence from a view is not evidence of absence
+from the world.

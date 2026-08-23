@@ -24,6 +24,20 @@ The code is split by responsibility: `wdw_core` owns portable objects;
 `wdw_behavior` interpretations and proposals; `wdw_tools` effect authority;
 `wdw_interfaces` replaceable projections; and `wdw_harness` loop composition.
 
+At an ingress-to-change boundary, the responsibility chain is:
+
+`outside world -> durable evidence / receipt -> communication + work routing -> bounded resident -> owning domain -> proposed / confirmed change`
+
+A receipt establishes that something arrived; it is not a domain conclusion.
+Communication and work records preserve coordination across retries and worker
+replacement. Residents reason within a declared scope. The owning domain alone
+accepts, rejects, or leaves a proposed change unresolved. No hop may turn an
+unknown into a fact merely to keep the pipeline moving.
+
+Places provide stable context for where a resident, interaction, or projection
+is situated. They organize context; they do not replace domain ownership or make
+a spatial rendering canonical.
+
 **LLMs are components, not the architecture.**
 
 **Deterministic where possible; agentic where valuable.**

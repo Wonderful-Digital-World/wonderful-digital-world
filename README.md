@@ -7,25 +7,20 @@ simulation. Its durable loop is:
 `persistent world -> observe -> understand -> reconcile -> act -> learn -> continue`
 
 ```mermaid
-flowchart TD
-    H["HUMAN<br/><small>intent · judgment · consent</small>"] --> W["PERSISTENT WORLD"]
-
-    W --> E["Evidence"]
-    W --> D["Durable Work"]
-    W --> S["Domain State"]
-
-    E --> P["Viewer-scoped Projections"]
-    D --> P
-    S --> P
-
-    P --> R1["Specialist Resident"]
-    P --> R2["Specialist Resident"]
-    P --> I["Human Interface"]
-
-    R1 --> A["Proposed actions<br/><small>explicit authority boundary</small>"]
-    R2 --> A
-    A --> W
+flowchart LR
+    O["Outside world"] --> E["Durable evidence / receipt"]
+    E --> C["Communication + work routing"]
+    C --> R["Bounded resident"]
+    R --> D["Owning domain"]
+    D --> A["Proposed / confirmed change"]
 ```
+
+The flow distinguishes four kinds of state that are easy to collapse: a durable
+receipt records what arrived; communication and work state coordinate what
+should happen; a resident contributes bounded reasoning; and the owning domain
+alone confirms canonical change. Evidence and work outlive the resident or
+worker handling them. Missing or ambiguous information remains explicitly
+unresolved rather than being converted into truth.
 
 This repository publishes the portable architecture: vocabulary, invariants,
 contracts, synthetic examples, and small executable reference code. It does not
@@ -109,6 +104,8 @@ The architecture diagram rests on a small vocabulary:
 - **Proposed action** — a recommendation for change, not permission to mutate
   canonical state.
 - **Interface** — a port into the world, not the world itself.
+- **Place** — a stable contextual address where residents, projections, and
+  interactions can be situated without making the visual layout canonical.
 
 See the [portable ontology](docs/ontology.md) for the formal distinctions.
 
@@ -137,7 +134,7 @@ The [architecture history](docs/evolution.md) records which ideas were promoted,
 rejected, narrowed, or superseded as those boundaries were learned through
 implementation.
 
-## What works here
+## Public reference implementation
 
 The Python packages implement and test a deliberately small seam through the
 architecture:
@@ -150,11 +147,8 @@ architecture:
 - versioned, freshness-aware, viewer-authorized projections; and
 - one deterministic observe/understand/reconcile iteration.
 
-The private, local-only Command Center adds an operator projection over that
-world without becoming canonical state. It provides overview, resident, model,
-and embedded World View routes, plus a separately generated public projection
-whose allowlist and minimum release delay are enforced before publication.
-
+These claims describe only the executable public repository. They do not claim
+parity with, or disclose the maturity and contracts of, any private deployment.
 This is a reference implementation, not a deployable personal world. See
 [implementation status](docs/implementation-status.md) before building on it.
 
@@ -165,15 +159,7 @@ Requires Python 3.11 or newer and has no runtime dependencies.
 ```sh
 PYTHONPATH=packages python3 -m unittest discover -s tests -v
 PYTHONPATH=packages python3 examples/ingress_to_projection.py
-PYTHONPATH=packages python3 -m wdw_observability.launch
 ```
-
-The launcher starts the local-only Command Center on `127.0.0.1:8787` and the
-separate World View app on `127.0.0.1:3000`, waits for both health surfaces,
-prints their URLs, and shuts both down together. The Command Center reads real
-workspace evidence by default and reports missing evidence honestly; synthetic
-fixtures require the explicit `--fixtures` flag on the single-server entry
-point. See [the operator guide](docs/command-center.md).
 
 Start with [architecture](docs/architecture.md), [ontology](docs/ontology.md),
 and [invariants](docs/invariants.md). The [persistent-world example](examples/ingress_to_projection.py)
