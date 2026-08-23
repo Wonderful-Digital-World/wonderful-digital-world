@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
@@ -10,6 +12,7 @@ class ProjectionNotReady(RuntimeError):
 
 PUBLIC_DELAY = timedelta(hours=24)
 PUBLIC_SCHEMA = "wdw.systems.v1"
+PUBLIC_SNAPSHOT_SCHEMA = "wdw.public-snapshot.v1"
 
 _SENSITIVE_KEYS = frozenset(
     {
@@ -203,19 +206,10 @@ def models_experience(evaluations: Iterable[Mapping[str, Any]]) -> dict[str, Any
     }
 
 
-def public_systems_projection(
-    private: Mapping[str, Any],
-    *,
-    now: datetime | None = None,
-    delay: timedelta = PUBLIC_DELAY,
+def _public_payload(
+    private: Mapping[str, Any], *, generated_at: datetime, delay: timedelta
 ) -> dict[str, Any]:
-    """Create the only supported public shape from a private overview."""
-    generated_at = _parse(str(private["generatedAt"]))
-    current = now or datetime.now(timezone.utc)
-    release_at = generated_at + delay
-    if current < release_at:
-        raise ProjectionNotReady(f"projection is releasable at {release_at.isoformat()}")
-
+    source_time = _parse(str(private["generatedAt"]))
     residents = list(private.get("residents", []))
     evaluations = list(private.get("intelligence", []))
     latest_eval = evaluations[0] if evaluations else {}
@@ -239,8 +233,8 @@ def public_systems_projection(
         )
     result = {
         "schema": PUBLIC_SCHEMA,
-        "generatedAt": current.isoformat(),
-        "sourceObservedAt": generated_at.isoformat(),
+        "generatedAt": generated_at.isoformat(),
+        "sourceObservedAt": source_time.isoformat(),
         "releaseDelayHours": delay.total_seconds() / 3600,
         "state": private.get("health", {}).get("state", "unknown"),
         "residents": {
@@ -259,6 +253,81 @@ def public_systems_projection(
     }
     assert_public_shape(result)
     return result
+
+
+def public_systems_projection(
+    private: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+    delay: timedelta = PUBLIC_DELAY,
+) -> dict[str, Any]:
+    """Create the legacy delayed public shape from a private overview."""
+    source_time = _parse(str(private["generatedAt"]))
+    current = now or datetime.now(timezone.utc)
+    release_at = source_time + delay
+    if current < release_at:
+        raise ProjectionNotReady(f"projection is releasable at {release_at.isoformat()}")
+    result = _public_payload(private, generated_at=current, delay=delay)
+    result["sourceObservedAt"] = source_time.isoformat()
+    return result
+
+
+def _canonical_json(value: Any) -> str:
+    """Encode controlled public values identically to JSON.stringify in the API."""
+    if isinstance(value, Mapping):
+        normalized = {str(key): _canonical_value(child) for key, child in value.items()}
+    else:
+        normalized = _canonical_value(value)
+    return json.dumps(
+        normalized,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _canonical_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _canonical_value(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_canonical_value(child) for child in value]
+    if isinstance(value, tuple):
+        return [_canonical_value(child) for child in value]
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _sha256(value: Any) -> str:
+    digest = hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def public_snapshot(
+    private: Mapping[str, Any],
+    *,
+    generated_at: datetime | None = None,
+    delay: timedelta = PUBLIC_DELAY,
+) -> dict[str, Any]:
+    """Build an immutable, safe envelope for immediate durable upload."""
+    if delay != PUBLIC_DELAY:
+        raise ValueError("public snapshot delay must be exactly 24 hours")
+    current = generated_at or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        raise ValueError("snapshot timestamps must be timezone-aware")
+    current = current.astimezone(timezone.utc)
+    eligible_at = current + delay
+    payload = _public_payload(private, generated_at=current, delay=delay)
+    content_hash = _sha256(payload)
+    unsigned = {
+        "schema": PUBLIC_SNAPSHOT_SCHEMA,
+        "generatedAt": current.isoformat(),
+        "eligibleAt": eligible_at.isoformat(),
+        "contentHash": content_hash,
+        "payload": payload,
+    }
+    return {"snapshotId": _sha256(unsigned), **unsigned}
 
 
 def assert_public_shape(value: Any, path: tuple[str, ...] = ()) -> None:
