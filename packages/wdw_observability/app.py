@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+from hashlib import sha256
 import html
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
@@ -12,6 +14,8 @@ from urllib.parse import quote, unquote
 from urllib.request import urlopen
 from wsgiref.simple_server import make_server
 
+from .coach_projection import build_coach_projection
+from .coach_view import coach_card_html, coach_detail_html
 from .projections import private_overview
 from .refresh import ProjectionRefresher
 from .sample import synthetic_records
@@ -19,6 +23,8 @@ from .store import OperatorStore
 
 
 StartResponse = Callable[[str, list[tuple[str, str]]], object]
+_CONTENT_HASH = re.compile(r"^[0-9a-f]{64}$")
+_LOOPBACK_CLIENTS = {"127.0.0.1", "::1", "localhost"}
 
 
 def _escape(value: object) -> str:
@@ -50,7 +56,60 @@ def _overview_body(view: dict[str, object]) -> str:
     activity = "".join(f'<tr><td>{_escape(row["resident_id"])}</td><td>{_escape(row["summary"])}</td><td>{_escape(row["occurred_at"])}</td></tr>' for row in view["recentActivity"]) or '<tr><td colspan="3" class="unknown">No meaningful activity observed.</td></tr>'
     ingestions = "".join(f'<tr><td>{_escape(row["resident_id"])}</td><td>{_escape(row["source_kind"])}</td><td>{_value(row.get("item_count"))}</td><td>{_escape(row["status"])}</td></tr>' for row in view["recentIngestions"]) or '<tr><td colspan="4" class="unknown">No ingestion evidence observed.</td></tr>'
     projection = view.get("projection", {})
-    return f'<span class="eyebrow">Operator projection</span><h1>The world, at useful resolution.</h1><p class="meta">Generated {_escape(view["generatedAt"])} · refresh {_value(projection.get("state") if isinstance(projection, dict) else None, "static")} · last success {_value(projection.get("lastSuccessAt") if isinstance(projection, dict) else None, "Unavailable")} · error {_value(projection.get("error") if isinstance(projection, dict) else None, "none")}</p><h2>Residents · {len(residents)}</h2><div class="grid">{cards}</div><h2>Needs Haley · {len(needs)}</h2><div class="grid">{needs_cards}</div><h2>Recent meaningful activity</h2><table><thead><tr><th>Resident</th><th>Outcome</th><th>Occurred</th></tr></thead><tbody>{activity}</tbody></table><h2>Recent ingestions</h2><table><thead><tr><th>Resident</th><th>Source</th><th>Items</th><th>Status</th></tr></thead><tbody>{ingestions}</tbody></table>'
+    morning = view.get("morningOperations", [])
+    morning_rows = "".join(
+        f'<tr><td><strong>{_value(row.get("title"), "Untitled")}</strong><br><span class="meta">{_escape(row.get("id", "unknown"))}</span></td><td>{_value(row.get("status"))}</td><td>{_value(row.get("owner"))}</td><td>{_value(row.get("priority"))}</td><td>{_value(row.get("last_progress") or row.get("progress_summary"), "None")}</td><td>{_value(row.get("blocker") or row.get("blocker_reason"), "None")}</td><td>{len(row.get("evidence", [])) if isinstance(row.get("evidence"), list) else 0}</td></tr>'
+        for row in morning if isinstance(row, dict)
+    ) or '<tr><td colspan="7" class="unknown">No Bridget morning-operation items projected.</td></tr>'
+    coach = view.get("coach")
+    coach_card = coach_card_html(coach) if isinstance(coach, dict) else '<p class="unknown">Coach projection unavailable.</p>'
+    return f'<span class="eyebrow">Operator projection</span><h1>The world, at useful resolution.</h1><p class="meta">Generated {_escape(view["generatedAt"])} · refresh {_value(projection.get("state") if isinstance(projection, dict) else None, "static")} · last success {_value(projection.get("lastSuccessAt") if isinstance(projection, dict) else None, "Unavailable")} · error {_value(projection.get("error") if isinstance(projection, dict) else None, "none")}</p><h2>Coach · fully observable resident</h2><div class="grid">{coach_card}</div><h2>Bridget morning operations · {len(morning) if isinstance(morning, list) else 0}</h2><table><thead><tr><th>Work item</th><th>Status</th><th>Owner</th><th>Priority</th><th>Progress</th><th>Blocker</th><th>Evidence</th></tr></thead><tbody>{morning_rows}</tbody></table><h2>Residents · {len(residents)}</h2><div class="grid">{cards}</div><h2>Needs Haley · {len(needs)}</h2><div class="grid">{needs_cards}</div><h2>Recent meaningful activity</h2><table><thead><tr><th>Resident</th><th>Outcome</th><th>Occurred</th></tr></thead><tbody>{activity}</tbody></table><h2>Recent ingestions</h2><table><thead><tr><th>Resident</th><th>Source</th><th>Items</th><th>Status</th></tr></thead><tbody>{ingestions}</tbody></table>'
+
+
+def _json_response(start_response: StartResponse, status: str, document: object) -> list[bytes]:
+    payload = json.dumps(document, separators=(",", ":")).encode()
+    start_response(status, [("Content-Type", "application/json"), ("Cache-Control", "no-store"), ("Content-Length", str(len(payload)))])
+    return [payload]
+
+
+def _morning_projection_request(environ: dict[str, object]) -> list[dict[str, object]]:
+    if str(environ.get("REMOTE_ADDR", "")) not in _LOOPBACK_CLIENTS:
+        raise PermissionError("morning projection ingestion is loopback-only")
+    raw_length = str(environ.get("CONTENT_LENGTH", "0"))
+    try:
+        content_length = int(raw_length)
+    except ValueError as exc:
+        raise ValueError("invalid Content-Length") from exc
+    if content_length < 1 or content_length > 1_000_000:
+        raise ValueError("projection payload must be between 1 byte and 1 MB")
+    stream = environ.get("wsgi.input")
+    if not hasattr(stream, "read"):
+        raise ValueError("request body is unavailable")
+    document = json.loads(stream.read(content_length))
+    if not isinstance(document, dict) or document.get("schema_version") != 1 or document.get("projection") != "command_center":
+        raise ValueError("unsupported projection envelope")
+    snapshots = document.get("snapshots")
+    if not isinstance(snapshots, list):
+        raise ValueError("snapshots must be a list")
+    validated = []
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            raise ValueError("each snapshot must be an object")
+        item_id = snapshot.get("item_id")
+        version = snapshot.get("source_version")
+        content_hash = snapshot.get("content_hash")
+        payload = snapshot.get("payload")
+        if not isinstance(item_id, str) or not item_id or not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            raise ValueError("snapshot identity or version is invalid")
+        if not isinstance(content_hash, str) or not _CONTENT_HASH.fullmatch(content_hash):
+            raise ValueError("snapshot content_hash is invalid")
+        encoded_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+        if sha256(encoded_payload).hexdigest() != content_hash:
+            raise ValueError("snapshot content_hash does not match payload")
+        if not isinstance(payload, dict) or payload.get("id") != item_id or payload.get("version") != version:
+            raise ValueError("snapshot payload identity does not match its envelope")
+        validated.append(snapshot)
+    return validated
 
 
 def _json_detail(value: object) -> str:
@@ -106,20 +165,37 @@ def create_app(store: OperatorStore | None = None, *, mode: str = "real", world_
 
     def application(environ: dict[str, object], start_response: StartResponse):
         path = unquote(str(environ.get("PATH_INFO", "/"))).rstrip("/") or "/"
+        method = str(environ.get("REQUEST_METHOD", "GET")).upper()
         if path == "/":
             start_response("302 Found", [("Location", "/overview"), ("Content-Length", "0")]); return [b""]
         if path == "/healthz":
             payload = b'{"status":"ok"}'; start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(payload)))]); return [payload]
+        if path == "/api/morning-operations":
+            if method != "POST":
+                return _json_response(start_response, "405 Method Not Allowed", {"error": "POST required"})
+            try:
+                snapshots = _morning_projection_request(environ)
+                accepted = operator_store.replace_morning_projection(snapshots)
+            except PermissionError as exc:
+                return _json_response(start_response, "403 Forbidden", {"error": str(exc)})
+            except (ValueError, KeyError, json.JSONDecodeError) as exc:
+                return _json_response(start_response, "400 Bad Request", {"error": str(exc)})
+            return _json_response(start_response, "200 OK", {"accepted": accepted})
         if refresher is not None:
             refresher.refresh()
         records = operator_store.records(limit=1000, mode=mode)
-        overview = private_overview(records, datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        overview = private_overview(records, now)
+        overview["coach"] = build_coach_projection(records, now=now)
+        overview["morningOperations"] = operator_store.morning_projection()
         overview["projection"] = refresher.status() if refresher else {
             "state": "static", "lastAttemptAt": None, "lastSuccessAt": None,
             "error": None, "intervalSeconds": None,
         }
         if path == "/api/overview":
             payload = json.dumps(overview, separators=(",", ":")).encode(); start_response("200 OK", [("Content-Type", "application/json"), ("Cache-Control", "no-store"), ("Content-Length", str(len(payload)))]); return [payload]
+        if path == "/api/residents/coach":
+            return _json_response(start_response, "200 OK", overview["coach"])
         if path == "/overview": payload = _page("Overview", _overview_body(overview))
         elif path == "/models": payload = _page("Models", _models_body(records))
         elif path == "/world":
@@ -136,6 +212,8 @@ def create_app(store: OperatorStore | None = None, *, mode: str = "real", world_
                 f'<iframe title="World View" src="{_escape(world_embed_url)}"></iframe>'
             )
             payload = _page("World", body)
+        elif path == "/residents/coach":
+            payload = _page("Coach", coach_detail_html(overview["coach"]))
         elif path.startswith("/residents/"):
             body = _resident_body(path.removeprefix("/residents/"), records)
             if body is None:

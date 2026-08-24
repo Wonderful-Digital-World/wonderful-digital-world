@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,12 +15,15 @@ from wdw_observability.contracts import (
     EvidenceState,
     Ingestion,
     MeaningfulActivity,
+    ModelVersion,
+    MorningInsightOperation,
     ResidentSnapshot,
     ResidentState,
 )
+from wdw_observability.activity import activity_log_path, append_resident_activity
 from socketserver import ThreadingMixIn
 
-from wdw_observability.overview import ThreadingWSGIServer, create_app
+from wdw_observability.overview import ProjectionRefresher, ThreadingWSGIServer, create_app
 from wdw_observability.store import OperatorStore
 
 NOW = datetime(2026, 8, 17, 12, tzinfo=UTC)
@@ -241,21 +245,24 @@ class CommandCenterOverviewTests(unittest.TestCase):
         *,
         scan_error: str | None = None,
     ) -> tuple[str, dict[str, str], bytes]:
-        response: dict[str, Any] = {}
-
-        def start_response(status: str, headers: list[tuple[str, str]]) -> None:
-            response["status"] = status
-            response["headers"] = dict(headers)
-
         app = create_app(
             self.store,
             workspace=self.workspace,
             now_provider=lambda: NOW,
             scan_error=scan_error,
         )
-        body = b"".join(
-            app({"PATH_INFO": path, "QUERY_STRING": query}, start_response)
-        )
+        return self._call(app, path, query)
+
+    def _call(
+        self, app: Any, path: str = "/overview", query: str = "view=private"
+    ) -> tuple[str, dict[str, str], bytes]:
+        response: dict[str, Any] = {}
+
+        def start_response(status: str, headers: list[tuple[str, str]]) -> None:
+            response["status"] = status
+            response["headers"] = dict(headers)
+
+        body = b"".join(app({"PATH_INFO": path, "QUERY_STRING": query}, start_response))
         return response["status"], response["headers"], body
 
     def test_private_page_answers_the_wp3_operator_questions(self) -> None:
@@ -394,6 +401,169 @@ class CommandCenterOverviewTests(unittest.TestCase):
         self.assertNotIn("Banjo Private", private_body.decode())
         public = json.loads(public_body)
         self.assertFalse(public["available"])
+
+    def test_coach_projection_covers_commissioning_flows(self) -> None:
+        observed_at = NOW - timedelta(minutes=10)
+        self.store.append_many([
+            ResidentSnapshot(
+                record_id="resident-coach",
+                occurred_at=observed_at,
+                observed_at=observed_at,
+                evidence_state=EvidenceState.KNOWN,
+                resident_id="coach",
+                display_name="Coach",
+                state=ResidentState.WORKING,
+                status_summary="Synthesizing recovery evidence.",
+                last_meaningful_activity_at=observed_at,
+            ),
+            MeaningfulActivity(
+                record_id="activity-coach-message",
+                occurred_at=observed_at,
+                observed_at=observed_at,
+                evidence_state=EvidenceState.KNOWN,
+                resident_id="coach",
+                kind="received-input",
+                summary="Accepted Haley's recovery input",
+                outcome="persisted",
+                source_ref="message://coach/recovery",
+            ),
+            Ingestion(
+                record_id="ingestion-coach-macrofactor",
+                occurred_at=observed_at,
+                observed_at=observed_at,
+                evidence_state=EvidenceState.KNOWN,
+                resident_id="coach",
+                source_kind="MacroFactor",
+                item_count=3,
+                status="complete",
+                completed_at=observed_at,
+                source_details={"sourceRef": "macro-factor://recovery"},
+            ),
+            MorningInsightOperation(
+                record_id="morning-coach-recovery",
+                occurred_at=observed_at,
+                observed_at=observed_at,
+                evidence_state=EvidenceState.KNOWN,
+                occurrence_id="morning-2026-08-17",
+                status="completed",
+                stages=("load-context", "reason", "persist", "deliver"),
+                insight={"headline": "Recovery is constrained"},
+                evidence={"inputs": ["MacroFactor", "message"]},
+                personalization={"focus": "recovery"},
+                current_state={
+                    "human_model_changes": [{
+                        "field": "recovery.status",
+                        "before": "unknown",
+                        "after": "strained",
+                        "because": "MacroFactor recovery input",
+                    }]
+                },
+                recent_observations={"recovery": "strained"},
+                historical_context={"baseline": "normal"},
+                prediction={"plannedTraining": "easy", "outcome": "accepted"},
+                provider="openai",
+                model="coach-recovery-v1",
+                model_version="2",
+                output_message_id="message-output-1",
+                delivery_id="delivery-1",
+                delivery_status="delivered",
+                source_ref="human-model://morning/2026-08-17",
+            ),
+            ModelVersion(
+                record_id="model-coach-recovery-v2",
+                occurred_at=observed_at,
+                observed_at=observed_at,
+                evidence_state=EvidenceState.KNOWN,
+                model_id="coach-recovery-v1",
+                version="2",
+                purpose="Turn recovery evidence into planned training.",
+                status="active",
+            ),
+            EvaluationRun(
+                record_id="evaluation-coach-recovery-v2",
+                occurred_at=observed_at,
+                observed_at=observed_at,
+                evidence_state=EvidenceState.KNOWN,
+                model_id="coach-recovery-v1",
+                model_version="2",
+                thought_count=8,
+                candidate_count=3,
+                reviewed_count=3,
+                precision_at_k=0.9,
+                readiness="ready",
+                source_ref="evaluation://coach-recovery-v1/2",
+            ),
+        ])
+
+        status, _, api_body = self._request("/api/residents/coach", "")
+        projection = json.loads(api_body)
+        self.assertEqual(status, "200 OK")
+        self.assertEqual(projection["residentId"], "coach")
+        self.assertEqual(projection["status"]["state"], "working")
+        self.assertEqual(projection["ingestion"]["source_kind"], "MacroFactor")
+        self.assertEqual(projection["insight"]["value"]["headline"], "Recovery is constrained")
+        self.assertEqual(projection["prediction"]["value"]["plannedTraining"], "easy")
+        self.assertEqual(projection["humanModel"]["authority"], "human-model")
+        self.assertTrue(projection["humanModel"]["readOnly"])
+        self.assertEqual(
+            projection["humanModel"]["changes"][0]["change"]["field"],
+            "recovery.status",
+        )
+        self.assertEqual(projection["models"][0]["modelId"], "coach-recovery-v1")
+        self.assertEqual(projection["models"][0]["metrics"]["precision_at_k"], 0.9)
+        categories = {entry["category"] for entry in projection["timeline"]}
+        self.assertTrue({
+            "input",
+            "input-and-ingestion",
+            "interpretation-and-persistence",
+            "human-model-change",
+            "reasoning-model-and-prediction",
+            "insight",
+            "output-and-delivery",
+        }.issubset(categories))
+
+        _, _, detail_body = self._request("/residents/coach", "")
+        detail = detail_body.decode()
+        for expected in ("Human Model is authoritative", "24-hour", "<details", "MacroFactor"):
+            self.assertIn(expected, detail)
+
+    def test_coach_activity_refreshes_in_the_same_process(self) -> None:
+        refreshed_at = datetime.now(UTC)
+        path = activity_log_path(self.workspace)
+        append_resident_activity(
+            path,
+            resident_id="coach",
+            state="working",
+            summary="First Coach activity",
+            occurred_at=refreshed_at,
+        )
+        refresher = ProjectionRefresher(
+            self.store, self.workspace, interval_seconds=0.001
+        )
+        app = create_app(
+            self.store,
+            workspace=self.workspace,
+            now_provider=lambda: datetime.now(UTC),
+            refresher=refresher,
+        )
+
+        _, _, first_body = self._call(app, "/api/residents/coach", "")
+        first = json.loads(first_body)
+        self.assertEqual(first["status"]["state"], "working")
+        self.assertEqual(first["status"]["summary"], "First Coach activity")
+
+        append_resident_activity(
+            path,
+            resident_id="coach",
+            state="waiting",
+            summary="Second Coach activity",
+            occurred_at=datetime.now(UTC),
+        )
+        time.sleep(0.01)
+        _, _, second_body = self._call(app, "/api/residents/coach", "")
+        second = json.loads(second_body)
+        self.assertEqual(second["status"]["state"], "waiting")
+        self.assertEqual(second["status"]["summary"], "Second Coach activity")
 
 
 if __name__ == "__main__":

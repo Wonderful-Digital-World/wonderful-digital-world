@@ -11,6 +11,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 from wsgiref.simple_server import WSGIServer, make_server
 
+from .coach_projection import build_coach_projection
+from .coach_view import coach_card_html, coach_detail_html
 from .projections import PUBLIC_DELAY, models_experience, private_overview, public_systems_projection
 from .refresh import ProjectionRefresher
 from .store import OperatorStore
@@ -28,6 +30,7 @@ OVERVIEW_RECORD_KINDS = (
     "MeaningfulActivity",
     "Ingestion",
     "EvaluationRun",
+    "ModelVersion",
     "AttentionItem",
     "MorningInsightOperation",
 )
@@ -283,6 +286,7 @@ def build_private_view(
             ),
         },
     ]
+    result["coach"] = build_coach_projection(rows, now=now)
     return result
 
 
@@ -494,6 +498,7 @@ def _private_content(view: Mapping[str, Any], scan_error: str | None) -> str:
     intelligence = view["intelligenceSummary"]
     models = view["models"]
     health = view["systemHealth"]
+    coach = view["coach"]
 
     warning = (
         '<div class="warning"><strong>Source refresh failed.</strong> Showing the last durable observations. '
@@ -540,6 +545,7 @@ def _private_content(view: Mapping[str, Any], scan_error: str | None) -> str:
     )
     return f"""
       {warning}
+      <section><h2>Resident focus</h2><div class="cards">{coach_card_html(coach)}</div></section>
       <section><h2>Needs Haley</h2><div class="cards">{needs_html}</div></section>
       <section><h2>Residents</h2><div class="table"><table><thead><tr><th>Resident</th><th>State</th><th>Status</th><th>Freshness</th><th>Deep link</th></tr></thead><tbody>{residents_html}</tbody></table></div></section>
       <section><h2>Intelligence Summary</h2><div class="metrics">
@@ -588,15 +594,23 @@ def _public_content(view: Mapping[str, Any]) -> str:
     """
 
 
-def render_page(view: Mapping[str, Any], *, mode: str, scan_error: str | None = None) -> bytes:
-    content = _private_content(view, scan_error) if mode == "private" else _public_content(view)
+def render_page(
+    view: Mapping[str, Any],
+    *,
+    mode: str,
+    scan_error: str | None = None,
+    content_override: str | None = None,
+) -> bytes:
+    content = content_override
+    if content is None:
+        content = _private_content(view, scan_error) if mode == "private" else _public_content(view)
     private_active = "active" if mode == "private" else ""
     public_active = "active" if mode == "public" else ""
     document = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Wonderful Digital World · Command Center</title>
 <style>
-:root{{--ink:#16211d;--muted:#617069;--paper:#f4f2ea;--panel:#fffdf7;--line:#d9d6ca;--green:#296248;--amber:#976515;--red:#9b3f38;--blue:#335f7b}}*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 system-ui,sans-serif}}header,main{{max-width:1240px;margin:auto}}header{{padding:38px 34px 22px;display:flex;justify-content:space-between;gap:24px;align-items:end}}h1{{font:700 34px/1.1 Georgia,serif;margin:4px 0}}h2{{font:700 23px/1.2 Georgia,serif;margin:0 0 16px}}h3{{font:700 17px/1.2 Georgia,serif;margin:24px 0 10px}}.eyebrow,.meta,small{{color:var(--muted)}}nav{{display:flex;background:#e7e4da;border-radius:10px;padding:4px}}nav a{{padding:8px 13px;border-radius:7px;color:var(--ink);text-decoration:none}}nav a.active{{background:var(--panel);box-shadow:0 1px 3px #0002}}main{{padding:0 34px 54px}}section{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin:0 0 18px}}.cards,.metrics{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}}.cards article,.stack article,.metrics article{{border:1px solid var(--line);border-radius:10px;padding:14px}}article div{{display:flex;gap:8px;align-items:center}}article p{{margin:9px 0;color:var(--muted)}}.metrics article{{display:flex;flex-direction:column}}.metrics strong{{font:700 26px/1.2 Georgia,serif;margin-top:6px}}.stack{{display:grid;gap:10px}}.subgrid{{display:grid;grid-template-columns:1fr 1fr;gap:24px}}.model-heading{{display:flex;align-items:center;gap:10px;flex-wrap:wrap}}.note{{border-left:3px solid var(--amber);padding:9px 12px;background:#fff8e8;color:var(--muted)}}.table{{overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:760px}}table.compact{{min-width:420px}}th,td{{text-align:left;padding:12px;border-bottom:1px solid var(--line);vertical-align:top}}th{{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}}td small{{display:block}}a{{color:var(--blue)}}.badge{{display:inline-block;padding:2px 7px;border-radius:999px;background:#e3e5e2;color:#45514c;font-size:11px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}}.badge.known,.badge.fresh,.badge.active,.badge.complete,.badge.completed,.badge.delivered,.badge.success,.badge.ready,.badge.measured,.badge.available{{background:#d9eadf;color:var(--green)}}.badge.partial,.badge.aging,.badge.needs-attention,.badge.partial-evidence,.badge.evidence-limited,.badge.incomplete,.badge.queued,.badge.pending{{background:#f2e4c4;color:var(--amber)}}.badge.stale,.badge.attention,.badge.failed,.badge.error,.badge.pending-human-review,.badge.unavailable{{background:#f1d8d5;color:var(--red)}}.empty,.warning{{border:1px dashed var(--line);border-radius:10px;padding:18px;color:var(--muted)}}.warning{{border-style:solid;border-color:#d7b56d;background:#fff5dc;margin-bottom:18px}}.warning span{{display:block;font-size:12px;margin-top:4px}}@media(max-width:800px){{header{{align-items:start;flex-direction:column}}.cards,.metrics,.subgrid{{grid-template-columns:1fr 1fr}}}}@media(max-width:520px){{.cards,.metrics,.subgrid{{grid-template-columns:1fr}}header,main{{padding-left:18px;padding-right:18px}}}}
+:root{{--ink:#16211d;--muted:#617069;--paper:#f4f2ea;--panel:#fffdf7;--line:#d9d6ca;--green:#296248;--amber:#976515;--red:#9b3f38;--blue:#335f7b}}*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 system-ui,sans-serif}}header,main{{max-width:1240px;margin:auto}}header{{padding:38px 34px 22px;display:flex;justify-content:space-between;gap:24px;align-items:end}}h1{{font:700 34px/1.1 Georgia,serif;margin:4px 0}}h2{{font:700 23px/1.2 Georgia,serif;margin:0 0 16px}}h3{{font:700 17px/1.2 Georgia,serif;margin:24px 0 10px}}.eyebrow,.meta,small,.unknown{{color:var(--muted)}}nav{{display:flex;background:#e7e4da;border-radius:10px;padding:4px}}nav a{{padding:8px 13px;border-radius:7px;color:var(--ink);text-decoration:none}}nav a.active{{background:var(--panel);box-shadow:0 1px 3px #0002}}main{{padding:0 34px 54px}}section{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin:0 0 18px}}.cards,.metrics,.grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}}.card,.cards article,.stack article,.metrics article{{border:1px solid var(--line);border-radius:10px;padding:14px}}.coach-card{{grid-column:span 2}}article div{{display:flex;gap:8px;align-items:center}}article p{{margin:9px 0;color:var(--muted)}}.metrics article{{display:flex;flex-direction:column}}.metrics strong{{font:700 26px/1.2 Georgia,serif;margin-top:6px}}.stack{{display:grid;gap:10px}}.subgrid{{display:grid;grid-template-columns:1fr 1fr;gap:24px}}.model-heading{{display:flex;align-items:center;gap:10px;flex-wrap:wrap}}.note,.attention{{border-left:3px solid var(--amber);padding:9px 12px;background:#fff8e8;color:var(--muted)}}.table{{overflow:auto}}table{{border-collapse:collapse;width:100%;min-width:760px}}table.compact{{min-width:420px}}th,td{{text-align:left;padding:12px;border-bottom:1px solid var(--line);vertical-align:top}}th{{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}}td small{{display:block}}a{{color:var(--blue)}}details{{margin-top:8px}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f0e7;padding:12px;border-radius:8px}}.badge{{display:inline-block;padding:2px 7px;border-radius:999px;background:#e3e5e2;color:#45514c;font-size:11px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}}.badge.known,.badge.fresh,.badge.active,.badge.complete,.badge.completed,.badge.delivered,.badge.success,.badge.ready,.badge.measured,.badge.available{{background:#d9eadf;color:var(--green)}}.badge.partial,.badge.aging,.badge.needs-attention,.badge.partial-evidence,.badge.evidence-limited,.badge.incomplete,.badge.queued,.badge.pending{{background:#f2e4c4;color:var(--amber)}}.badge.stale,.badge.attention,.badge.failed,.badge.error,.badge.pending-human-review,.badge.unavailable{{background:#f1d8d5;color:var(--red)}}.empty,.warning{{border:1px dashed var(--line);border-radius:10px;padding:18px;color:var(--muted)}}.warning{{border-style:solid;border-color:#d7b56d;background:#fff5dc;margin-bottom:18px}}.warning span{{display:block;font-size:12px;margin-top:4px}}@media(max-width:800px){{header{{align-items:start;flex-direction:column}}.cards,.metrics,.grid,.subgrid{{grid-template-columns:1fr 1fr}}}}@media(max-width:520px){{.cards,.metrics,.grid,.subgrid{{grid-template-columns:1fr}}.coach-card{{grid-column:auto}}header,main{{padding-left:18px;padding-right:18px}}}}
 </style></head><body><header><div><div class="eyebrow">OPERATOR OVERVIEW · REAL OBSERVATIONS</div><h1>Command Center</h1><div class="meta">Generated {_text(view.get('generatedAt'), 'now')} · {_text(mode.title())} view</div></div><nav aria-label="Preview mode"><a class="{private_active}" href="/overview?view=private">Private</a><a class="{public_active}" href="/overview?view=public">Public preview</a></nav></header><main>{content}</main></body></html>"""
     return document.encode("utf-8")
 
@@ -614,12 +628,19 @@ def create_app(
         if path == "/":
             start_response("302 Found", [("Location", "/overview?view=private"), ("Content-Length", "0")])
             return [b""]
-        if path not in {"/overview", "/api/overview"}:
+        if path not in {
+            "/overview",
+            "/api/overview",
+            "/residents/coach",
+            "/api/residents/coach",
+        }:
             body = b"Not found"
             start_response("404 Not Found", [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))])
             return [body]
         requested = parse_qs(str(environ.get("QUERY_STRING", ""))).get("view", ["private"])[0]
         mode = requested if requested in {"private", "public"} else "private"
+        if path in {"/residents/coach", "/api/residents/coach"}:
+            mode = "private"
         if refresher is not None:
             refresher.refresh()
         now = now_provider()
@@ -636,6 +657,16 @@ def create_app(
         if path == "/api/overview":
             body = json.dumps(view, separators=(",", ":"), sort_keys=True).encode("utf-8")
             content_type = "application/json; charset=utf-8"
+        elif path == "/api/residents/coach":
+            body = json.dumps(view["coach"], separators=(",", ":"), sort_keys=True).encode("utf-8")
+            content_type = "application/json; charset=utf-8"
+        elif path == "/residents/coach":
+            refresh_error = _mapping(view.get("projection")).get("error")
+            detail = coach_detail_html(view["coach"])
+            if refresh_error:
+                detail = f'<div class="warning">Projection refresh warning: {_text(refresh_error)}</div>{detail}'
+            body = render_page(view, mode="private", content_override=detail)
+            content_type = "text/html; charset=utf-8"
         else:
             refresh_error = _mapping(view.get("projection")).get("error") if mode == "private" else None
             body = render_page(view, mode=mode, scan_error=str(refresh_error) if refresh_error else scan_error)

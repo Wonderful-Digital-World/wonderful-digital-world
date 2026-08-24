@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from urllib.request import urlopen
 
 from .contracts import (
-    EvaluationRun, EvidenceState, Ingestion, MeaningfulActivity, ModelVersion,
+    AttentionItem, AttentionState, EvaluationRun, EvidenceState, Ingestion, MeaningfulActivity, ModelVersion,
     MorningInsightOperation, ResidentSnapshot, ResidentState, ReviewDecision, ReviewOutcome,
 )
 
@@ -128,6 +128,43 @@ def load_resident_activity(
             raise ValueError(f"resident activity line {line_number} must be an object")
         events.append(raw)
     return resident_activity_records(events, observed_at, stale_after)
+
+
+def _workspace_resident_activity(
+    path: Path,
+    observed_at: datetime,
+    stale_after: timedelta = DEFAULT_ACTIVITY_STALE_AFTER,
+) -> tuple[list[ResidentSnapshot], list[AttentionItem]]:
+    """Fault-isolate shared-feed events while preserving strict direct ingestion."""
+    if not path.is_file():
+        return [], []
+    valid_events: list[Mapping[str, Any]] = []
+    rejected: list[AttentionItem] = []
+    source_ref = path.resolve().as_uri()
+    source_version = path.stat().st_mtime_ns
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        raw: Any = None
+        try:
+            raw = json.loads(line)
+            if not isinstance(raw, Mapping):
+                raise ValueError("resident activity event must be an object")
+            _resident_activity_event(raw, observed_at)
+            valid_events.append(raw)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            candidate_id = raw.get("residentId") if isinstance(raw, Mapping) else None
+            resident_id = candidate_id if candidate_id in DISPLAY_NAMES else "command-center"
+            rejected.append(AttentionItem(
+                record_id=f"resident-activity-rejected-{line_number}-{source_version}",
+                occurred_at=observed_at, observed_at=observed_at,
+                evidence_state=EvidenceState.KNOWN, resident_id=resident_id,
+                owner="operator", status=AttentionState.OPEN, reason=str(exc),
+                category="projection-source",
+                summary=f"Resident activity event rejected at line {line_number}.",
+                updated_at=observed_at, evidence_ref=source_ref, source_ref=source_ref,
+            ))
+    return resident_activity_records(valid_events, observed_at, stale_after), rejected
 
 
 def _boundary(value: Mapping[str, Any], owner: str) -> None:
@@ -423,17 +460,16 @@ def workspace_records(workspace: Path) -> list[Any]:
         activity_ttl = timedelta(seconds=int(os.environ.get("WDW_RESIDENT_ACTIVITY_TTL_SECONDS", "900")))
     except ValueError as exc:
         raise ValueError("WDW_RESIDENT_ACTIVITY_TTL_SECONDS must be an integer") from exc
-    runtime_by_resident = {
-        record.resident_id: record
-        for record in load_resident_activity(activity_path, now, activity_ttl)
-    }
+    runtime_records, rejected_activity = _workspace_resident_activity(activity_path, now, activity_ttl)
+    runtime_by_resident = {record.resident_id: record for record in runtime_records}
+    records.extend(rejected_activity)
     records = [
         runtime_by_resident.get(record.resident_id, record)
         if isinstance(record, ResidentSnapshot) else record
         for record in records
     ]
 
-    report = workspace / "the-human-model" / "modeling" / "reports" / "readiness_report.md"
+    report = workspace / "human-model" / "modeling" / "reports" / "readiness_report.md"
     if report.exists():
         occurred = _time(report)
         records.append(ModelVersion(f"human-model-readiness-{report.stat().st_mtime_ns}", occurred, now, EvidenceState.KNOWN, "human-model-readiness", "report-artifact", "Readiness model/data system", "observed"))

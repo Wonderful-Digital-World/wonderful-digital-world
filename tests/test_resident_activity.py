@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -83,3 +84,34 @@ def test_shared_emitter_rejects_invalid_input(tmp_path: Path) -> None:
         append_resident_activity(
             activity_log_path(tmp_path), resident_id="coach", state="active", summary="Bad state.",
         )
+
+
+def test_workspace_refresh_isolates_invalid_activity_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("WDW_RESIDENT_ACTIVITY_TTL_SECONDS", "604800")
+    path = activity_log_path(tmp_path)
+    append_resident_activity(
+        path,
+        resident_id="coach",
+        state="working",
+        summary="Coach is processing fresh recovery evidence.",
+        evidence_references=["test:valid"],
+        occurred_at=NOW,
+    )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event(eventId="bad", residentId="unknown")) + "\n")
+
+    records = workspace_records(tmp_path)
+
+    assert any(
+        record.resident_id == "coach" and record.state is ResidentState.WORKING
+        for record in records
+    )
+    rejected = [
+        record for record in records
+        if getattr(record, "category", None) == "projection-source"
+    ]
+    assert len(rejected) == 1
+    assert "line 2" in rejected[0].summary
+    assert rejected[0].resident_id == "command-center"

@@ -4,6 +4,7 @@ import json
 import sqlite3
 from collections.abc import Iterable
 from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,13 @@ class OperatorStore:
                     decision_id TEXT NOT NULL UNIQUE,
                     occurred_at TEXT NOT NULL,
                     payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS morning_projection_snapshots (
+                    item_id TEXT PRIMARY KEY,
+                    source_version INTEGER NOT NULL CHECK(source_version > 0),
+                    content_hash TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    projected_at TEXT NOT NULL
                 );
                 """
             )
@@ -165,6 +173,59 @@ class OperatorStore:
                 self._decode(row)
                 for row in connection.execute(query, params)
             ]
+
+    def replace_morning_projection(self, snapshots: Iterable[dict[str, Any]]) -> int:
+        """Atomically replace Bridget's non-canonical morning-operations read model."""
+        materialized = list(snapshots)
+        item_ids = [str(snapshot["item_id"]) for snapshot in materialized]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("morning projection item_id values must be unique")
+        projected_at = datetime.now(timezone.utc).isoformat()
+        with closing(self._connect()) as connection, connection:
+            for snapshot in materialized:
+                connection.execute(
+                    """INSERT INTO morning_projection_snapshots
+                    (item_id, source_version, content_hash, payload, projected_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(item_id) DO UPDATE SET
+                        source_version = excluded.source_version,
+                        content_hash = excluded.content_hash,
+                        payload = excluded.payload,
+                        projected_at = excluded.projected_at""",
+                    (
+                        snapshot["item_id"],
+                        snapshot["source_version"],
+                        snapshot["content_hash"],
+                        json.dumps(snapshot["payload"], separators=(",", ":"), sort_keys=True),
+                        projected_at,
+                    ),
+                )
+            if item_ids:
+                placeholders = ",".join("?" for _ in item_ids)
+                connection.execute(
+                    f"DELETE FROM morning_projection_snapshots WHERE item_id NOT IN ({placeholders})",
+                    item_ids,
+                )
+            else:
+                connection.execute("DELETE FROM morning_projection_snapshots")
+        return len(materialized)
+
+    def morning_projection(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """SELECT item_id, source_version, content_hash, payload, projected_at
+                FROM morning_projection_snapshots ORDER BY item_id"""
+            )
+            result = []
+            for row in rows:
+                payload = json.loads(row["payload"])
+                payload["_projection"] = {
+                    "sourceVersion": row["source_version"],
+                    "contentHash": row["content_hash"],
+                    "projectedAt": row["projected_at"],
+                }
+                result.append(payload)
+            return result
 
     @staticmethod
     def _decode(row: sqlite3.Row) -> dict[str, Any]:

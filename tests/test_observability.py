@@ -1,6 +1,8 @@
 import json
 import tempfile
 import unittest
+from hashlib import sha256
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -99,6 +101,64 @@ class ObservabilityTests(unittest.TestCase):
             self.assertIn(b'src="http://127.0.0.1:3000/rooms?mode=display"', response)
             self.assertIn(b"starting or temporarily unavailable", response)
             self.assertNotIn(b"The world is not running", response)
+
+    def test_morning_operations_projection_is_local_validated_and_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = OperatorStore(Path(directory) / "operator.sqlite3")
+            app = create_app(store)
+            item = {
+                "id": "work-1",
+                "version": 2,
+                "title": "Verified work",
+                "status": "completed",
+                "owner": "bridget",
+                "priority": "high",
+                "last_progress": "Delivered",
+                "blocker": None,
+                "evidence": [{"kind": "artifact", "verified": True}],
+            }
+            encoded = json.dumps(item, sort_keys=True, separators=(",", ":")).encode()
+            document = {
+                "schema_version": 1,
+                "projection": "command_center",
+                "snapshots": [{
+                    "item_id": "work-1",
+                    "source_version": 2,
+                    "content_hash": sha256(encoded).hexdigest(),
+                    "payload": item,
+                }],
+            }
+
+            def request(body, *, remote="127.0.0.1"):
+                raw = json.dumps(body).encode()
+                statuses = []
+                response = b"".join(app({
+                    "PATH_INFO": "/api/morning-operations",
+                    "REQUEST_METHOD": "POST",
+                    "REMOTE_ADDR": remote,
+                    "CONTENT_LENGTH": str(len(raw)),
+                    "wsgi.input": BytesIO(raw),
+                }, lambda status, headers: statuses.append(status)))
+                return statuses[0], json.loads(response)
+
+            self.assertEqual(request(document), ("200 OK", {"accepted": 1}))
+            self.assertEqual(request(document), ("200 OK", {"accepted": 1}))
+            self.assertEqual(len(store.morning_projection()), 1)
+            self.assertEqual(store.morning_projection()[0]["evidence"][0]["verified"], True)
+
+            status, overview_payload = request(document | {"projection": "wrong"})
+            self.assertEqual(status, "400 Bad Request")
+            self.assertIn("unsupported", overview_payload["error"])
+            self.assertEqual(request(document, remote="192.0.2.5")[0], "403 Forbidden")
+
+            statuses = []
+            payload = b"".join(app(
+                {"PATH_INFO": "/api/overview"},
+                lambda status, headers: statuses.append(status),
+            ))
+            self.assertEqual(statuses, ["200 OK"])
+            overview = json.loads(payload)
+            self.assertEqual(overview["morningOperations"][0]["id"], "work-1")
 
 
 if __name__ == "__main__":
