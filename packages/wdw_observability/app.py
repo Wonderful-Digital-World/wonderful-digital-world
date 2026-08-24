@@ -38,7 +38,7 @@ def _value(value: object, fallback: str = "Unavailable") -> str:
 def _page(title: str, body: str) -> bytes:
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>{_escape(title)} · WDW Command Center</title><style>
-:root{{color-scheme:dark;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#111310;color:#e8e5dc}}*{{box-sizing:border-box}}body{{margin:0}}a{{color:#b9cfac}}header,main{{width:min(1120px,92vw);margin:auto}}header{{display:flex;align-items:center;gap:2rem;padding:1.2rem 0;border-bottom:1px solid #353a32}}header strong{{margin-right:auto}}nav a{{margin-left:1.1rem}}main{{padding:3rem 0 5rem}}h1{{font:500 clamp(2rem,5vw,4.3rem)/1.05 Georgia,serif;max-width:18ch}}h2{{margin-top:3rem;font-size:.78rem;text-transform:uppercase;letter-spacing:.14em;color:#a4aa9d}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1rem;margin:1.2rem 0}}.card{{border:1px solid #353a32;background:#171a16;padding:1.1rem;min-height:9rem}}.card p{{color:#b8bcb3}}.eyebrow,.meta{{color:#8e9688;font-size:.78rem;text-transform:uppercase;letter-spacing:.1em}}.attention{{border-color:#a9755c}}table{{width:100%;border-collapse:collapse}}th,td{{text-align:left;vertical-align:top;padding:.75rem .4rem;border-bottom:1px solid #353a32}}.unknown{{color:#d8b589}}iframe{{width:100%;min-height:68vh;border:1px solid #353a32;background:white}}code{{overflow-wrap:anywhere}}
+:root{{color-scheme:dark;font:16px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#111310;color:#e8e5dc}}*{{box-sizing:border-box}}body{{margin:0}}a{{color:#b9cfac}}header,main{{width:min(1120px,92vw);margin:auto}}header{{display:flex;align-items:center;gap:2rem;padding:1.2rem 0;border-bottom:1px solid #353a32}}header strong{{margin-right:auto}}nav a{{margin-left:1.1rem}}main{{padding:3rem 0 5rem}}h1{{font:500 clamp(2rem,5vw,4.3rem)/1.05 Georgia,serif;max-width:18ch}}h2{{margin-top:3rem;font-size:.78rem;text-transform:uppercase;letter-spacing:.14em;color:#a4aa9d}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1rem;margin:1.2rem 0}}.card{{border:1px solid #353a32;background:#171a16;padding:1.1rem;min-height:9rem}}.card p{{color:#b8bcb3}}.eyebrow,.meta{{color:#8e9688;font-size:.78rem;text-transform:uppercase;letter-spacing:.1em}}.attention{{border-color:#a9755c}}.launch-link{{display:inline-block;margin-top:1rem;padding:.8rem 1rem;border:1px solid #708267;background:#1d241b;text-decoration:none}}table{{width:100%;border-collapse:collapse}}th,td{{text-align:left;vertical-align:top;padding:.75rem .4rem;border-bottom:1px solid #353a32}}.unknown{{color:#d8b589}}code{{overflow-wrap:anywhere}}
 </style></head><body><header><strong>WDW / private</strong><nav><a href="/overview">Overview</a><a href="/world">World</a><a href="/models">Models</a></nav></header><main>{body}</main></body></html>""".encode()
 
 
@@ -156,7 +156,6 @@ def _is_online(url: str) -> bool:
 def create_app(store: OperatorStore | None = None, *, mode: str = "real", world_url: str | None = None, world_health_url: str | None = None, refresher: ProjectionRefresher | None = None):
     operator_store = store or OperatorStore(Path(os.environ.get("WDW_COMMAND_CENTER_DB", "wdw-command-center.sqlite3")))
     configured_world = world_url or os.environ.get("WDW_WORLD_VIEW_URL", "http://127.0.0.1:3000/rooms")
-    world_embed_url = f"{configured_world}{'&' if '?' in configured_world else '?'}mode=display"
     health_url = (
         world_health_url
         or os.environ.get("WDW_WORLD_VIEW_HEALTH_URL")
@@ -203,13 +202,13 @@ def create_app(store: OperatorStore | None = None, *, mode: str = "real", world_
             status = (
                 '<p class="meta">World View connected.</p>'
                 if online
-                else '<article class="card attention"><p class="unknown">World View is starting or temporarily unavailable. The embedded view remains attached and will appear when the service answers.</p></article>'
+                else '<article class="card attention"><p class="unknown">World View is starting or temporarily unavailable. Try the link again when the service is ready.</p></article>'
             )
             body = (
                 '<span class="eyebrow">Existing World View projection</span>'
                 '<h1>Move through the world.</h1>'
                 f"{status}"
-                f'<iframe title="World View" src="{_escape(world_embed_url)}"></iframe>'
+                f'<a class="launch-link" href="{_escape(configured_world)}">Open World View on port 3000 →</a>'
             )
             payload = _page("World", body)
         elif path == "/residents/coach":

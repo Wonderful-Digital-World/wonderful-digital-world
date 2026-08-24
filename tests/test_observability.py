@@ -81,7 +81,7 @@ class ObservabilityTests(unittest.TestCase):
             self.assertEqual(overview["schema"], "wdw.operator-overview.v1")
             self.assertEqual(overview["health"]["state"], "unknown")
 
-    def test_world_route_keeps_embed_mounted_while_service_starts(self):
+    def test_world_route_links_to_world_view_while_service_starts(self):
         with tempfile.TemporaryDirectory() as directory:
             app = create_app(
                 OperatorStore(Path(directory) / "operator.sqlite3"),
@@ -98,9 +98,10 @@ class ObservabilityTests(unittest.TestCase):
 
             self.assertEqual(statuses, ["200 OK"])
             is_online.assert_called_once_with("http://127.0.0.1:3000/api/health")
-            self.assertIn(b'src="http://127.0.0.1:3000/rooms?mode=display"', response)
+            self.assertIn(b'href="http://127.0.0.1:3000/rooms"', response)
+            self.assertIn(b"Open World View on port 3000", response)
             self.assertIn(b"starting or temporarily unavailable", response)
-            self.assertNotIn(b"The world is not running", response)
+            self.assertNotIn(b"<iframe", response)
 
     def test_morning_operations_projection_is_local_validated_and_idempotent(self):
         with tempfile.TemporaryDirectory() as directory:
