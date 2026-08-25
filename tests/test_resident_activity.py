@@ -79,6 +79,23 @@ def test_shared_emitter_round_trips_all_residents(tmp_path: Path) -> None:
     assert {record.state for record in records} == {ResidentState.WORKING}
 
 
+def test_malformed_unrelated_lines_do_not_poison_activity_refresh(tmp_path: Path) -> None:
+    path = activity_log_path(tmp_path)
+    append_resident_activity(
+        path, resident_id="coach", state="working", summary="Coach is running.",
+        evidence_references=["test:coach"], run_id="run-coach", occurred_at=NOW,
+    )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("not-json\n")
+        handle.write("[]\n")
+
+    records = load_resident_activity(path, NOW)
+
+    assert [(record.resident_id, record.state) for record in records] == [
+        ("coach", ResidentState.WORKING),
+    ]
+
+
 def test_shared_emitter_rejects_invalid_input(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not available at runtime"):
         append_resident_activity(
