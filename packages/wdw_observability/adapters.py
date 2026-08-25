@@ -122,10 +122,10 @@ def load_resident_activity(
             continue
         try:
             raw = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid resident activity JSON on line {line_number}") from exc
+        except json.JSONDecodeError:
+            continue
         if not isinstance(raw, Mapping):
-            raise ValueError(f"resident activity line {line_number} must be an object")
+            continue
         events.append(raw)
     return resident_activity_records(events, observed_at, stale_after)
 
