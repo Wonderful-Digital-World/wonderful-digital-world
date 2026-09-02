@@ -17,3 +17,6 @@ interpretations remain attributed rather than silently merged.
 
 This directory intentionally defines the public protocol only. Private resident
 prompts, memories, policies, and lived data are outside the publication boundary.
+
+For the end-to-end commissioning process, use the
+[resident integration runbook](../ops/resident-integration-runbook-v1.md).
