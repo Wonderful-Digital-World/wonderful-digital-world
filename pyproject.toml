@@ -19,6 +19,7 @@ wdw-export-public = "wdw_observability.export_public:main"
 wdw-publish-public = "wdw_observability.publish_public:main"
 wdw-publish-dynamic-public = "wdw_observability.publish_dynamic_public:main"
 wdw-start = "wdw_observability.launch:main"
+wdw-coach-edge = "wdw_coach_edge.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["packages"]

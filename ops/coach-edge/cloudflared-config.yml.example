@@ -1,0 +1,7 @@
+tunnel: REPLACE_WITH_TUNNEL_UUID
+credentials-file: /Users/REPLACE_WITH_LOCAL_USER/.cloudflared/REPLACE_WITH_TUNNEL_UUID.json
+
+ingress:
+  - hostname: coach-edge.example.invalid
+    service: http://127.0.0.1:4380
+  - service: http_status:404

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.wdw.coach-edge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/REPLACE_WITH_VENV/bin/wdw-coach-edge</string>
+    <string>--credentials</string>
+    <string>/REPLACE_WITH_PRIVATE_CONFIG/coach-edge-credentials.json</string>
+    <string>--audit-log</string>
+    <string>/REPLACE_WITH_PRIVATE_STATE/coach-edge-audit.jsonl</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>WDW_COACH_EXPECTED_COMMIT</key>
+    <string>REPLACE_WITH_COMMISSIONED_COACH_COMMIT</string>
+    <key>WDW_HARNESS_COMMIT</key>
+    <string>REPLACE_WITH_COMMISSIONED_HARNESS_COMMIT</string>
+    <key>WDW_COACH_IDENTITY_HASH</key>
+    <string>REPLACE_WITH_GENERATED_IDENTITY_HASH</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/REPLACE_WITH_PRIVATE_STATE/coach-edge.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/REPLACE_WITH_PRIVATE_STATE/coach-edge.stderr.log</string>
+</dict>
+</plist>
