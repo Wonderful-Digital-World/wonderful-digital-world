@@ -32,13 +32,13 @@ def test_newest_runtime_event_is_current_truth() -> None:
     assert records[0].evidence_state is EvidenceState.KNOWN
 
 
-def test_expired_runtime_event_becomes_stale_and_offline() -> None:
+def test_expired_runtime_event_has_unavailable_status() -> None:
     records = resident_activity_records(
         [event(occurredAt="2026-08-21T07:30:00Z")], NOW, timedelta(minutes=15),
     )
-    assert records[0].state is ResidentState.OFFLINE
+    assert records[0].state is ResidentState.UNAVAILABLE
     assert records[0].evidence_state is EvidenceState.STALE
-    assert records[0].status_summary == "Runtime activity signal expired."
+    assert records[0].status_summary == "No recent activity; current status is unavailable."
 
 
 @pytest.mark.parametrize(("field", "value"), [
@@ -50,7 +50,9 @@ def test_invalid_activity_contract_is_rejected(field: str, value: object) -> Non
         resident_activity_records([event(**{field: value})], NOW)
 
 
-def test_workspace_fallbacks_use_canonical_offline_state(tmp_path: Path) -> None:
+def test_missing_activity_does_not_prove_a_resident_is_offline(tmp_path: Path) -> None:
+    (tmp_path / "coach").mkdir()
+    (tmp_path / "coach" / "resident.json").write_text("{}")
     records = workspace_records(tmp_path)
 
     assert {record.resident_id for record in records} == {
@@ -59,7 +61,7 @@ def test_workspace_fallbacks_use_canonical_offline_state(tmp_path: Path) -> None
         "coach",
         "mini-me",
     }
-    assert {record.state for record in records} == {ResidentState.OFFLINE}
+    assert {record.state for record in records} == {ResidentState.UNAVAILABLE}
 
 
 def test_shared_emitter_round_trips_all_residents(tmp_path: Path) -> None:
@@ -114,7 +116,7 @@ def test_workspace_refresh_isolates_invalid_activity_line(
         state="working",
         summary="Coach is processing fresh recovery evidence.",
         evidence_references=["test:valid"],
-        occurred_at=NOW,
+        occurred_at=datetime.now(timezone.utc),
     )
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event(eventId="bad", residentId="unknown")) + "\n")

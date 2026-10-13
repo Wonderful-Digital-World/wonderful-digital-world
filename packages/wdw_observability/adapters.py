@@ -102,8 +102,8 @@ def resident_activity_records(
         if observed_at - snapshot.occurred_at > stale_after:
             snapshot = ResidentSnapshot(
                 snapshot.record_id, snapshot.occurred_at, observed_at, EvidenceState.STALE,
-                snapshot.resident_id, snapshot.display_name, ResidentState.OFFLINE,
-                "Runtime activity signal expired.", snapshot.occurred_at,
+                snapshot.resident_id, snapshot.display_name, ResidentState.UNAVAILABLE,
+                "No recent activity; current status is unavailable.", snapshot.occurred_at,
             )
         records.append(snapshot)
     return records
@@ -444,13 +444,13 @@ def workspace_records(workspace: Path) -> list[Any]:
         fallback = repo / "README.md"
         source = descriptor if descriptor.exists() else fallback
         if not source.exists():
-            records.append(ResidentSnapshot(f"resident-{slug}", now, now, EvidenceState.UNKNOWN, slug, name, ResidentState.OFFLINE, "Repository or descriptor not observed.", None))
+            records.append(ResidentSnapshot(f"resident-{slug}", now, now, EvidenceState.UNKNOWN, slug, name, ResidentState.UNAVAILABLE, "Repository or descriptor not observed; current status is unavailable.", None))
             continue
         occurred = _time(source)
         age_days = (now - occurred).days
         evidence = EvidenceState.STALE if age_days >= 7 else (EvidenceState.KNOWN if descriptor.exists() else EvidenceState.PARTIAL)
-        state = ResidentState.IDLE if descriptor.exists() else ResidentState.OFFLINE
-        summary = f"Descriptor observed; latest source evidence is {age_days} days old." if descriptor.exists() else "Repository observed, but no resident descriptor or activity feed is available."
+        state = ResidentState.UNAVAILABLE
+        summary = f"Descriptor observed; latest source evidence is {age_days} days old. Current status is unavailable." if descriptor.exists() else "Repository observed, but no resident descriptor or activity feed is available."
         records.append(ResidentSnapshot(f"resident-{slug}", occurred, now, evidence, slug, name, state, summary, occurred))
 
     activity_path = Path(os.environ.get(
