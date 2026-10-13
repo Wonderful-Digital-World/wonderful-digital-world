@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from subprocess import CompletedProcess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,6 +19,14 @@ from wdw_observability.public_release import (
 )
 
 NOW = datetime(2026, 8, 19, 8, 15, tzinfo=UTC)
+
+
+def test_publisher_preserves_modified_manifest_status_columns(monkeypatch, tmp_path):
+    path = "public/projections/wdw/manifest.v1.json"
+    monkeypatch.setattr(publish_public.subprocess, "run", lambda *a, **kw: CompletedProcess(a, 0, f" M {path}\n"))
+    assert publish_public._changed_projection_paths(tmp_path) == [path]
+
+
 RECORDS = [
     {
         "kind": "ResidentSnapshot",

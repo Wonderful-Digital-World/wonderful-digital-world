@@ -30,7 +30,7 @@ def _git(repo: Path, *arguments: str) -> str:
         text=True,
         capture_output=True,
     )
-    return completed.stdout.strip()
+    return completed.stdout.rstrip("\n")
 
 
 def _repository_root(path: Path) -> Path:
