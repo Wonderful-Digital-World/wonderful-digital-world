@@ -114,7 +114,7 @@ def test_workspace_refresh_isolates_invalid_activity_line(
         state="working",
         summary="Coach is processing fresh recovery evidence.",
         evidence_references=["test:valid"],
-        occurred_at=NOW,
+        occurred_at=datetime.now(timezone.utc) - timedelta(minutes=1),  # workspace_records reads the real clock
     )
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event(eventId="bad", residentId="unknown")) + "\n")

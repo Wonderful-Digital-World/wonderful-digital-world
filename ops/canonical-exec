@@ -1,0 +1,117 @@
+#!/bin/sh
+# Run a service only from its canonical checkout at the exact commit it was deployed at.
+#
+#   canonical-exec LABEL REPO EXPECTED_SHA WORKDIR ENVFILE|- COMMAND [ARG ...]
+#
+# launchd (or any supervisor) calls this instead of the command. If the checkout's HEAD
+# is not EXPECTED_SHA the service refuses to start (exit 78, EX_CONFIG), so moving a
+# checkout can never silently change what is running: a deploy is an explicit re-pin.
+# ENVFILE is parsed as data (never evaluated). Each start writes a provenance record.
+set -eu
+
+if [ "$#" -lt 6 ]; then
+  echo "usage: canonical-exec LABEL REPO EXPECTED_SHA WORKDIR ENVFILE COMMAND [ARG ...]" >&2
+  exit 64
+fi
+
+label=$1
+repo=$2
+expected_sha=$3
+workdir=$4
+env_file=$5
+shift 5
+
+case "$label" in
+  *[!A-Za-z0-9._-]*|'') echo "invalid provenance label: $label" >&2; exit 64 ;;
+esac
+
+canonical_root=${WDW_WORKSPACE_ROOT:-$HOME/Developer}
+runtime_root=${WDW_RUNTIME_STATE_ROOT:-$HOME/Library/Application Support/WDWRuntimeState}
+
+repo_real=$(cd -P "$repo" 2>/dev/null && pwd) || {
+  echo "canonical source missing: $repo" >&2
+  exit 78
+}
+workdir_real=$(cd -P "$workdir" 2>/dev/null && pwd) || {
+  echo "working directory missing: $workdir" >&2
+  exit 78
+}
+
+case "$repo_real" in
+  "$canonical_root"/*) ;;
+  *) echo "refusing noncanonical source: $repo_real" >&2; exit 78 ;;
+esac
+repo_name=${repo_real#"$canonical_root"/}
+case "$repo_name" in
+  */*|'') echo "canonical repository must be a direct child of $canonical_root: $repo_real" >&2; exit 78 ;;
+esac
+case "$workdir_real" in
+  "$repo_real"|"$repo_real"/*) ;;
+  *) echo "working directory is outside canonical repository: $workdir_real" >&2; exit 78 ;;
+esac
+
+actual_sha=$(git -C "$repo_real" rev-parse HEAD 2>/dev/null) || {
+  echo "not a Git checkout: $repo_real" >&2
+  exit 78
+}
+if [ "$actual_sha" != "$expected_sha" ]; then
+  echo "canonical commit mismatch for $repo_real: expected $expected_sha, got $actual_sha" >&2
+  exit 78
+fi
+
+if [ "$env_file" != "-" ]; then
+  if [ ! -f "$env_file" ]; then
+    echo "runtime environment file missing: $env_file" >&2
+    exit 78
+  fi
+  # Parse dotenv assignments as data, never as shell code. Quoting the full
+  # NAME=value argument preserves spaces and metacharacters without eval.
+  while IFS= read -r env_line || [ -n "$env_line" ]; do
+    case "$env_line" in
+      ''|'#'*) continue ;;
+      export\ *) env_line=${env_line#export } ;;
+    esac
+    env_name=${env_line%%=*}
+    env_value=${env_line#*=}
+    if [ "$env_name" = "$env_line" ]; then
+      echo "invalid dotenv line without '=' in $env_file" >&2
+      exit 78
+    fi
+    case "$env_name" in
+      [A-Za-z_]* ) ;;
+      *) echo "invalid dotenv variable name in $env_file: $env_name" >&2; exit 78 ;;
+    esac
+    case "$env_name" in
+      *[!A-Za-z0-9_]* ) echo "invalid dotenv variable name in $env_file: $env_name" >&2; exit 78 ;;
+    esac
+    case "$env_value" in
+      \"*\") env_value=${env_value#\"}; env_value=${env_value%\"} ;;
+      \'*\') env_value=${env_value#\'}; env_value=${env_value%\'} ;;
+    esac
+    export "$env_name=$env_value"
+  done < "$env_file"
+fi
+
+export WDW_SERVICE_LABEL=$label
+export WDW_SOURCE_REPOSITORY=$repo_real
+export WDW_SOURCE_COMMIT=$actual_sha
+export WDW_WORKSPACE_ROOT=$canonical_root
+export WDW_RUNTIME_STATE_ROOT=$runtime_root
+
+provenance_dir="$runtime_root/provenance"
+mkdir -p "$provenance_dir"
+umask 077
+provenance_tmp="$provenance_dir/.${label}.$$"
+{
+  printf 'service=%s\n' "$label"
+  printf 'pid=%s\n' "$$"
+  printf 'started_at_utc=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  printf 'repository=%s\n' "$repo_real"
+  printf 'commit=%s\n' "$actual_sha"
+  printf 'working_directory=%s\n' "$workdir_real"
+  printf 'executable=%s\n' "$1"
+} > "$provenance_tmp"
+mv "$provenance_tmp" "$provenance_dir/$label.env"
+
+cd "$workdir_real"
+exec "$@"
