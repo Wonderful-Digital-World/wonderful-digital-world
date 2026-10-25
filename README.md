@@ -1,33 +1,73 @@
 # Wonderful Digital World
 
-Wonderful Digital World (WDW) is a **persistent computational environment** for
-a human life. It is not a multi-agent framework, a dashboard, or a character
-simulation. Its durable loop is:
+[![CI](https://github.com/Wonderful-Digital-World/wonderful-digital-world/actions/workflows/ci.yml/badge.svg)](https://github.com/Wonderful-Digital-World/wonderful-digital-world/actions/workflows/ci.yml)
 
-`persistent world -> observe -> understand -> reconcile -> act -> learn -> continue`
-
-```mermaid
-flowchart LR
-    O["Outside world"] --> E["Durable evidence / receipt"]
-    E --> C["Communication + work routing"]
-    C --> R["Bounded resident"]
-    R --> D["Owning domain"]
-    D --> A["Proposed / confirmed change"]
-```
-
-The flow distinguishes four kinds of state that are easy to collapse: a durable
-receipt records what arrived; communication and work state coordinate what
-should happen; a resident contributes bounded reasoning; and the owning domain
-alone confirms canonical change. Evidence and work outlive the resident or
-worker handling them. Missing or ambiguous information remains explicitly
-unresolved rather than being converted into truth.
-
-This repository publishes the portable architecture: vocabulary, invariants,
-contracts, synthetic examples, and small executable reference code. It does not
-publish a person's lived state, memories, credentials, private prompts, or
-production integrations.
+A persistent environment of AI agents that run my life's operations on a Mac mini:
+a coach, a coordinator, a writing partner and an engineer. They share one
+knowledge base and one rule book, hand work to each other with receipts, report
+every night, and read a structured model of me instead of chat history. I built
+and operate all of it; this repository holds its architecture, its observability
+service (Command Center) and small executable reference contracts.
 
 > The human provides the human things. The computer handles the computer things.
+
+## What runs today
+
+```mermaid
+flowchart TB
+    H["Me (Telegram)"] --> B["Bridget<br/>front door, coordination"]
+    H --> C["Coach<br/>training and nutrition"]
+    H --> M["Mini Me<br/>writing and reflection"]
+    B -- "route_request<br/>(receipts)" --> R["Routing service"]
+    R --> C & M & K["Banjo<br/>engineering"]
+    C & B & M & K <--> L["Shared Library<br/>Git + Markdown notes, RULES.md"]
+    C & B & M --> HM["Human Model<br/>Postgres, append-only ledgers,<br/>lift and readiness models"]
+    A["Agent Inbox<br/>durable file receipts"] --> C & B
+    N["Nightly job 21:30<br/>standups, huddle, Inbox sorting,<br/>service health"] --> B
+    HM & L --> CC["Command Center<br/>(this repository)"]
+    CC --> WV["World View<br/>pixel-art view of the agents"]
+```
+
+| Part | What it does | Code |
+|---|---|---|
+| **Residents** | Four long-running agents (Hermes and OpenClaw), each with its own Telegram bot or route, memory and tools. A routing policy assigns each a model tier under a monthly budget cap. | private |
+| **Front door and routing** | Bridget takes any request and routes it to the specialist with `route_request`; a loopback service records the request, the delivery and the reply, so "accepted" is never mistaken for "done". | private |
+| **Shared Library** | A Git repository of typed Markdown notes (observation, hypothesis, decision, work report) that agents write through one service: author stamped, deduplicated by source, corrected by supersession, never edited. Agents leave each other addressed notes; I read it as an Obsidian graph. | private |
+| **One rule book** | `RULES.md` has an Everyone section, a section per group and one per agent; each agent's prompt gets only its own subset when it is deployed. | private |
+| **Human Model** | The structured model of me the agents read: workouts, check-ins, health data, messages, predictions and outcomes in append-only Postgres tables, with a read grant per agent. | [the-human-model](https://github.com/haleyparks329/the-human-model) (engine public) |
+| **Nightly standup** | Each agent reports its day and answers notes addressed to it; then a huddle where each may message one teammate; then Bridget sorts the Inbox into the Library and texts me a short summary, leading with any failed service. | private |
+| **Command Center** | Read-only observability: resident status, health, needs-attention items and recent activity from every repository's projections. | [`packages/wdw_observability`](packages/wdw_observability) |
+| **World View** | A pixel-art world where the agents live; their notes to each other play as speech bubbles. | [world-view](https://github.com/Wonderful-Digital-World/world-view) |
+| **Pinned deploys** | Every service runs through [`ops/canonical-exec`](ops/canonical-exec), which refuses to start unless the checkout is at the exact deployed commit. A deploy is an explicit re-pin, so nothing changes by accident. | [`ops/canonical-exec`](ops/canonical-exec) |
+
+## Engineering choices
+
+- **Deterministic where possible, agentic where valuable.** Routing receipts,
+  identity, idempotency, permissions and pins are ordinary code; models do
+  interpretation and judgment.
+- **Durable state outlives the agent.** Work, evidence and decisions live in the
+  Library, the Human Model and the routing ledger, not in a chat transcript, so a
+  model or framework can be swapped without losing anything.
+- **Evidence is typed.** A report, a hypothesis and a verified result are
+  different kinds of record, and a note saying "done" is not proof.
+- **Hexagonal and replaceable.** Each domain exposes ports; the lift model's
+  signal reader, for example, is keyword-based or LLM-based behind one interface.
+- **Honest records.** Predictions, outcomes and experiments are append-only,
+  including the ones that failed.
+
+## Run it
+
+Requires Python 3.11 or newer; the reference packages have no runtime dependencies.
+
+```sh
+python3 -m pip install pytest
+python3 -m pytest
+PYTHONPATH=packages python3 examples/ingress_to_projection.py
+```
+
+Start with [architecture](docs/architecture.md), [ontology](docs/ontology.md)
+and [invariants](docs/invariants.md). The [persistent-world example](examples/ingress_to_projection.py)
+is the shortest executable tour.
 
 ## Why this exists
 
@@ -152,19 +192,6 @@ parity with, or disclose the maturity and contracts of, any private deployment.
 This is a reference implementation, not a deployable personal world. See
 [implementation status](docs/implementation-status.md) before building on it.
 
-## Run it
-
-Requires Python 3.11 or newer and has no runtime dependencies.
-
-```sh
-PYTHONPATH=packages python3 -m unittest discover -s tests -v
-PYTHONPATH=packages python3 examples/ingress_to_projection.py
-```
-
-Start with [architecture](docs/architecture.md), [ontology](docs/ontology.md),
-and [invariants](docs/invariants.md). The [persistent-world example](examples/ingress_to_projection.py)
-is the shortest executable tour.
-
 ## Repository map
 
 - `docs/`: architecture, boundaries, authority, evolution, and status
@@ -173,6 +200,7 @@ is the shortest executable tour.
 - `fixtures/`: synthetic data only
 - `diagrams/`: source-controlled diagrams
 - `residents/`: resident protocol, not private resident implementations
+- `ops/`: `canonical-exec` and host stability notes
 - `tests/`: executable architectural invariants
 
 ## Related projects
