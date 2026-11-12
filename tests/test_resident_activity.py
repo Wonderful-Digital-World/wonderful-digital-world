@@ -50,6 +50,28 @@ def test_invalid_activity_contract_is_rejected(field: str, value: object) -> Non
         resident_activity_records([event(**{field: value})], NOW)
 
 
+def test_library_notes_mark_residents_active_or_idle(tmp_path: Path) -> None:
+    notes = tmp_path / "library" / "agents" / "notes"
+    notes.mkdir(parents=True)
+    now = datetime.now(timezone.utc)
+    for author, age in (("bridget", timedelta(hours=2)), ("coach", timedelta(days=3))):
+        (notes / f"{author}.md").write_text(
+            f'---\nauthor: "{author}"\ncreated_at: "{(now - age).isoformat()}"\n---\nPrivate text.\n',
+            encoding="utf-8",
+        )
+    append_resident_activity(  # expired runtime signal from an old harness
+        activity_log_path(tmp_path), resident_id="coach", state="working", summary="Old run.",
+        evidence_references=["test:old"], run_id="run-old", occurred_at=now - timedelta(days=60),
+    )
+
+    states = {record.resident_id: record for record in workspace_records(tmp_path)}
+
+    assert states["bridget"].state is ResidentState.ACTIVE
+    assert states["coach"].state is ResidentState.IDLE
+    assert states["coach"].evidence_state is EvidenceState.KNOWN
+    assert "Private text" not in states["bridget"].status_summary
+
+
 def test_workspace_fallbacks_use_canonical_offline_state(tmp_path: Path) -> None:
     records = workspace_records(tmp_path)
 

@@ -21,6 +21,8 @@ RUNTIME_ACTIVITY_STATES = frozenset({
     ResidentState.ERROR, ResidentState.OFFLINE,
 })
 DEFAULT_ACTIVITY_STALE_AFTER = timedelta(minutes=15)
+LIBRARY_ACTIVE_WINDOW = timedelta(hours=24)
+LIBRARY_IDLE_WINDOW = timedelta(days=7)
 MORNING_INSIGHT_EVENT_TYPES = frozenset({
     "scheduled", "started", "personalization_read", "current_state_read",
     "recent_observations_read", "historical_context_read", "prediction_used",
@@ -32,6 +34,29 @@ MORNING_INSIGHT_EVENT_TYPES = frozenset({
 
 def _time(path: Path) -> datetime:
     return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+
+
+def _library_note_times(notes_dir: Path) -> dict[str, list[datetime]]:
+    """Creation times of shared Library notes per resident, read from front matter only."""
+    times: dict[str, list[datetime]] = {}
+    for note in sorted(notes_dir.glob("*.md")) if notes_dir.is_dir() else []:
+        fields: dict[str, str] = {}
+        with note.open(encoding="utf-8") as handle:
+            if handle.readline().strip() != "---":
+                continue
+            for line in handle:
+                if line.strip() == "---":
+                    break
+                key, _, value = line.partition(":")
+                fields[key.strip()] = value.strip().strip('"')
+        author, created = fields.get("author", ""), fields.get("created_at", "")
+        if author not in DISPLAY_NAMES or not created:
+            continue
+        try:
+            times.setdefault(author, []).append(_parse_time(created, datetime.now(timezone.utc)))
+        except ValueError:
+            continue
+    return times
 
 
 def _parse_time(value: Any, fallback: datetime) -> datetime:
@@ -438,7 +463,18 @@ def workspace_records(workspace: Path) -> list[Any]:
     """Read repository-owned, versioned boundaries into read-only projections."""
     now = datetime.now(timezone.utc)
     records: list[Any] = []
+    note_times = _library_note_times(workspace / "library" / "agents" / "notes")
+    library_backed: set[str] = set()
     for slug, name in DISPLAY_NAMES.items():
+        seen = [moment for moment in note_times.get(slug, []) if moment <= now]
+        latest = max(seen, default=None)
+        if latest is not None and now - latest <= LIBRARY_IDLE_WINDOW:
+            recent = sum(now - moment <= LIBRARY_ACTIVE_WINDOW for moment in seen)
+            state = ResidentState.ACTIVE if recent else ResidentState.IDLE
+            summary = f"{recent} shared Library notes in the last 24 hours."
+            records.append(ResidentSnapshot(f"resident-{slug}", latest, now, EvidenceState.KNOWN, slug, name, state, summary, latest))
+            library_backed.add(slug)
+            continue
         repo = workspace / slug
         descriptor = repo / "resident.json"
         fallback = repo / "README.md"
@@ -461,7 +497,11 @@ def workspace_records(workspace: Path) -> list[Any]:
     except ValueError as exc:
         raise ValueError("WDW_RESIDENT_ACTIVITY_TTL_SECONDS must be an integer") from exc
     runtime_records, rejected_activity = _workspace_resident_activity(activity_path, now, activity_ttl)
-    runtime_by_resident = {record.resident_id: record for record in runtime_records}
+    # An expired runtime signal must not hide fresher Library evidence; a live one still wins.
+    runtime_by_resident = {
+        record.resident_id: record for record in runtime_records
+        if record.evidence_state is EvidenceState.KNOWN or record.resident_id not in library_backed
+    }
     records.extend(rejected_activity)
     records = [
         runtime_by_resident.get(record.resident_id, record)
