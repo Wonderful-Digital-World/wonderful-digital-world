@@ -4,7 +4,7 @@
 
 A persistent environment of AI agents that run my life's operations on a Mac mini:
 a coach, a coordinator, a writing partner and an engineer. They share one
-knowledge base and one rule book, hand work to each other with receipts, report
+knowledge base and one rule book, leave each other addressed notes, report
 every night, and read a structured model of me instead of chat history. I built
 and operate all of it; this repository holds its architecture, its observability
 service (Command Center) and small executable reference contracts.
@@ -15,11 +15,10 @@ service (Command Center) and small executable reference contracts.
 
 ```mermaid
 flowchart TB
-    H["Me (Telegram)"] --> B["Bridget<br/>front door, coordination"]
+    H["Me (Hermes desktop app)"] --> B["Bridget<br/>front door, coordination"]
     H --> C["Coach<br/>training and nutrition"]
     H --> M["Mini Me<br/>writing and reflection"]
-    B -- "route_request<br/>(receipts)" --> R["Routing service"]
-    R --> C & M & K["Banjo<br/>engineering"]
+    B -- "message_agent" --> C & M & K["Banjo<br/>engineering"]
     C & B & M & K <--> L["Shared Library<br/>Git + Markdown notes, RULES.md"]
     C & B & M --> HM["Human Model<br/>Postgres, append-only ledgers,<br/>lift and readiness models"]
     A["Agent Inbox<br/>durable file receipts"] --> C & B
@@ -30,23 +29,23 @@ flowchart TB
 
 | Part | What it does | Code |
 |---|---|---|
-| **Residents** | Four long-running agents (Hermes and OpenClaw), each with its own Telegram bot or route, memory and tools. A routing policy assigns each a model tier under a monthly budget cap. | private |
-| **Front door and routing** | Bridget takes any request and routes it to the specialist with `route_request`; a loopback service records the request, the delivery and the reply, so "accepted" is never mistaken for "done". | private |
+| **Residents** | Four long-running agents on two open-source agent frameworks (Hermes and OpenClaw), each with its own chat in the Hermes desktop app, memory and tools. A routing policy assigns each a model tier under a monthly budget cap. | private |
+| **Front door and handoffs** | Bridget takes any request, passes it to the specialist with `message_agent` and answers with their reply. Work that outlives a chat becomes a handoff note in the Library, which stays open in the nightly standup until its owner closes it with a work report. An earlier loopback routing service with delivery receipts was taken out of the agents' tools in November 2026, in favor of a shared chat in the desktop app. | private |
 | **Shared Library** | A Git repository of typed Markdown notes (observation, hypothesis, decision, work report) that agents write through one service: author stamped, deduplicated by source, corrected by supersession, never edited. Agents leave each other addressed notes; I read it as an Obsidian graph. | private |
-| **One rule book** | `RULES.md` has an Everyone section, a section per group and one per agent; each agent's prompt gets only its own subset when it is deployed. | private |
-| **Human Model** | The structured model of me the agents read: workouts, check-ins, health data, messages, predictions and outcomes in append-only Postgres tables, with a read grant per agent. | [the-human-model](https://github.com/haleyparks329/the-human-model) (engine public) |
-| **Nightly standup** | Each agent reports its day and answers notes addressed to it; then a huddle where each may message one teammate; then Bridget sorts the Inbox into the Library and texts me a short summary, leading with any failed service. | private |
+| **One rule book** | `RULES.md` has an Everyone section, a section per group and one per agent; each agent's prompt gets only its own subset when the prompt is assembled. | private |
+| **Human Model** | The structured model of me the agents read: workouts, check-ins, health data and messages in Postgres with provenance, and predictions and outcomes in append-only ledgers, read through token-scoped grants. | [the-human-model](https://github.com/haleyparks329/the-human-model) (engine public) |
+| **Nightly standup** | Each agent reports its day and answers notes addressed to it; then a huddle where each may message one teammate; then Bridget sorts the Inbox into the Library. A digest lists failed services, merged changes that are not yet deployed and open tickets, and Bridget gives me the short version in her morning report. | private |
 | **Command Center** | Read-only observability: resident status, health, needs-attention items and recent activity from every repository's projections. | [`packages/wdw_observability`](packages/wdw_observability) |
-| **World View** | A pixel-art world where the agents live; their notes to each other play as speech bubbles. | [world-view](https://github.com/Wonderful-Digital-World/world-view) |
-| **Pinned deploys** | Every service runs through [`ops/canonical-exec`](ops/canonical-exec), which refuses to start unless the checkout is at the exact deployed commit. A deploy is an explicit re-pin, so nothing changes by accident. | [`ops/canonical-exec`](ops/canonical-exec) |
+| **World View** | A pixel-art world where the agents live, built on the open-source tiny.place; their notes to each other play as speech bubbles. | [world-view](https://github.com/Wonderful-Digital-World/world-view) |
+| **Pinned deploys** | The services that run from my repositories (14 launchd jobs) start through [`ops/canonical-exec`](ops/canonical-exec), which refuses to start unless the checkout is at the exact deployed commit. A deploy is an explicit re-pin, so nothing changes by accident. The agent gateways and the nightly job are not pinned yet. | [`ops/canonical-exec`](ops/canonical-exec) |
 
 ## Engineering choices
 
-- **Deterministic where possible, agentic where valuable.** Routing receipts,
-  identity, idempotency, permissions and pins are ordinary code; models do
+- **Deterministic where possible, agentic where valuable.** Note authorship,
+  identity, idempotency, budgets, permissions and pins are ordinary code; models do
   interpretation and judgment.
 - **Durable state outlives the agent.** Work, evidence and decisions live in the
-  Library, the Human Model and the routing ledger, not in a chat transcript, so a
+  Library, the Human Model and the Agent Inbox, not in a chat transcript, so a
   model or framework can be swapped without losing anything.
 - **Evidence is typed.** A report, a hypothesis and a verified result are
   different kinds of record, and a note saying "done" is not proof.
